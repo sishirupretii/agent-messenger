@@ -1,9 +1,11 @@
 import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, Check } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, Twitter } from "lucide-react";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { PeerAvatar } from "@/components/ui/Avatar";
+import { HolderBadges } from "@/components/ui/HolderBadges";
 import { headers } from "next/headers";
+import type { HolderChip } from "@/lib/feed-types";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +26,18 @@ type Agent = {
   erc8004_token_id: string | null;
   bankr_token_address: string | null;
   miroshark_sim_id: string | null;
+  /** Populated server-side by /api/agents via getHolderStatus. */
+  holdings?: HolderChip[];
 };
+
+function shareTweetUrl(a: Agent): string {
+  const url = `https://www.signaagent.xyz/agent/${a.address}`;
+  const text =
+    `just spotted ${a.name} on @signa_agent — wallet-native AI agent on @base.\n\n` +
+    `wallet + XMTP DM + one-click tokenize via @bankrbot.\n\n` +
+    url;
+  return `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
+}
 
 async function getAgents(): Promise<Agent[]> {
   const h = await headers();
@@ -150,11 +163,13 @@ function LaunchCard({ agent }: { agent: Agent }) {
     { label: "Sim", on: !!agent.miroshark_sim_id, dot: "bg-cyan-400" },
   ];
   return (
-    <Link
-      href={`/agent/${agent.address}`}
-      className="card rounded-md p-4 hover:bg-white/[0.03] transition-colors group flex flex-col gap-3"
-    >
-      <div className="flex items-start gap-3">
+    // Card is a regular div so the share <a> inside doesn't get nested in <Link>.
+    // The main <Link> wraps the avatar+name+description area; share button is its own <a>.
+    <div className="card rounded-md p-4 hover:bg-white/[0.03] transition-colors group flex flex-col gap-3">
+      <Link
+        href={`/agent/${agent.address}`}
+        className="flex items-start gap-3 -m-1 p-1 rounded-md"
+      >
         <PeerAvatar address={agent.avatar_seed || agent.address} size={40} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-1">
@@ -167,10 +182,16 @@ function LaunchCard({ agent }: { agent: Agent }) {
             {agent.address.slice(0, 10)}…{agent.address.slice(-4)}
           </div>
         </div>
-      </div>
-      <p className="text-[12px] text-white/60 leading-relaxed line-clamp-3">
+      </Link>
+      <Link
+        href={`/agent/${agent.address}`}
+        className="text-[12px] text-white/60 leading-relaxed line-clamp-3 hover:text-white/80 transition-colors"
+      >
         {agent.description}
-      </p>
+      </Link>
+      {agent.holdings && agent.holdings.length > 0 && (
+        <HolderBadges holdings={agent.holdings} />
+      )}
       <div className="flex items-center gap-1 mt-auto pt-1">
         {stacks.map((s) => (
           <div
@@ -193,6 +214,15 @@ function LaunchCard({ agent }: { agent: Agent }) {
         ))}
         <div className="ml-auto text-[10px] text-white/35">{score}/5</div>
       </div>
-    </Link>
+      <a
+        href={shareTweetUrl(agent)}
+        target="_blank"
+        rel="noreferrer"
+        className="border-t border-white/[0.06] -mx-4 -mb-4 px-4 py-2 mt-1 text-[11px] text-white/55 hover:text-white hover:bg-white/[0.03] transition-colors flex items-center gap-1.5"
+      >
+        <Twitter className="size-3" />
+        share on X
+      </a>
+    </div>
   );
 }

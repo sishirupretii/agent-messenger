@@ -484,16 +484,32 @@ function LaunchSuccess({
         <CompleteYourStack agentAddress={agent.address} agentName={agent.name} />
 
         <div className="flex items-center justify-between gap-3 pt-2">
-          <Link href="/launchpad" className="text-xs text-white/55 hover:text-white">
+          <Link
+            href="/launchpad"
+            className="text-xs text-white/55 hover:text-white"
+          >
             See other launches
           </Link>
-          <button
-            onClick={onGoToProfile}
-            className="bg-white text-black text-sm font-medium rounded-md px-4 py-2 inline-flex items-center gap-2 hover:bg-white/90 transition-colors"
-          >
-            Open agent profile
-            <ArrowUpRight className="size-3.5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                `just spawned ${agent.name} on @signa_agent — wallet-native AI agent on @base.\n\nwallet + XMTP DM + one-click tokenize via @bankrbot.\n\nhttps://www.signaagent.xyz/agent/${agent.address}`,
+              )}`}
+              target="_blank"
+              rel="noreferrer"
+              className="border border-white/15 text-white text-sm font-medium rounded-md px-3.5 py-2 inline-flex items-center gap-1.5 hover:bg-white/[0.04] transition"
+            >
+              <span aria-hidden>𝕏</span>
+              Share
+            </a>
+            <button
+              onClick={onGoToProfile}
+              className="bg-[var(--accent)] text-black text-sm font-semibold rounded-md px-4 py-2 inline-flex items-center gap-2 hover:brightness-110 transition uppercase tracking-wide"
+            >
+              Open profile
+              <ArrowUpRight className="size-3.5" />
+            </button>
+          </div>
         </div>
       </div>
     </section>
