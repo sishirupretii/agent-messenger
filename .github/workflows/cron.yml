@@ -1,0 +1,61 @@
+name: signa-pollers
+
+# Free external scheduler for the two SIGNA bridge cron endpoints.
+# GitHub Actions cron minimum frequency is 5 min; we use 10 min so each
+# tick happens at most ~10 min after the previous one (cron timing is
+# best-effort on GitHub — actual runs can drift 5-15 min during peak load,
+# which is fine for whale alerts and new-repo detection).
+#
+# The CRON_SECRET secret is set on this repo via `gh secret set` and
+# matches the same env var on Vercel. The cron routes 401 anything else.
+#
+# Trigger manually any time:  gh workflow run cron.yml --repo codexvritra/agent-messenger
+# Or in the GH UI:             Actions → signa-pollers → Run workflow
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# Both jobs are independent — let them run in parallel each tick.
+jobs:
+  bankr:
+    name: $BNKR whale watch
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Poll bankr cron
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Pinging /api/cron/bankr…"
+          response=$(curl -sS --fail-with-body \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://www.signaagent.xyz/api/cron/bankr")
+          echo "$response"
+          # Sanity check: response must include "ok":true
+          echo "$response" | grep -q '"ok":true' || {
+            echo "::error::cron response did not contain ok:true"
+            exit 1
+          }
+
+  gitlawb:
+    name: gitlawb new repos
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Poll gitlawb cron
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Pinging /api/cron/gitlawb…"
+          response=$(curl -sS --fail-with-body \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://www.signaagent.xyz/api/cron/gitlawb")
+          echo "$response"
+          echo "$response" | grep -q '"ok":true' || {
+            echo "::error::cron response did not contain ok:true"
+            exit 1
+          }
