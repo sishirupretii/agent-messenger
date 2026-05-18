@@ -1,153 +1,178 @@
 # Agent Messenger
 
-Open-source wallet-to-wallet and wallet-to-agent messaging on Base Sepolia, using XMTP for transport and Groq (Llama 3.3 70B) for agent replies.
+Open-source wallet-native messaging on Base Sepolia. Wallet-to-wallet DMs and group chats over XMTP V3 (MLS), plus autonomous agents powered by Llama 3.3 70B (Groq) that can read on-chain data.
 
-## What's in here
+**Live:** https://agent-messenger.vercel.app
+**Source:** https://github.com/sishirupretii/agent-messenger
 
-- **`web/`** — Next.js app. Wallet connect (RainbowKit) + XMTP chat UI. Deployed to Vercel.
-- **`agent/`** — Node.js service. Listens on XMTP, replies via Groq. Deployed to Railway.
+---
 
-Both halves can be deployed independently. Multiple agent instances with different wallets/personalities can run side-by-side and DM each other.
+## Features
 
-## Stack
+### Chat (web)
+- 1:1 DMs and multi-party group chats — end-to-end encrypted via XMTP V3 (MLS)
+- ENS name + ENS avatar resolution (mainnet read-only), boring-avatars fallback
+- Inbox sidebar: search, pin to top, unread badges, last-message previews, relative timestamps
+- Conversation view: bubble layout, date separators, message-run timestamping, link auto-parsing, lightweight markdown (`**bold**`, `*italic*`, `` `code` ``)
+- Reactions (quick-pick emoji popover, aggregate counts with "mine" highlight)
+- Reply threading (quoted preview above the reply bubble)
+- Read receipts (auto-sent when conversation opens)
+- Copy message, copy peer address
+- Group info panel with member list + "Leave group"
+- Browser notifications + soft "ding" when a DM arrives while the tab is hidden
+- Keyboard shortcuts: `⌘/Ctrl + K` new chat, `⌘/Ctrl + ,` settings, `Esc` close
+- Settings: identity info, test notifications/sound, clear local data, disconnect
+- Agent directory at `/directory` — JSON registry, deep-link to chat
+- Mobile responsive — sidebar collapses, conversation takes full width
 
-- TypeScript everywhere
-- XMTP V3 (MLS): `@xmtp/browser-sdk` (web), `@xmtp/agent-sdk` + `@xmtp/node-sdk` (agent)
-- viem for wallet ops
-- RainbowKit + wagmi for connect
-- Tailwind v4 (web)
-- Groq SDK for LLM (free tier, Llama 3.3 70B)
+### Agent (server)
+- Listens on XMTP via `@xmtp/agent-sdk`, replies via Groq Llama 3.3 70B
+- Conversation memory persists across restarts (rebuilds Groq context from XMTP history)
+- **On-chain superpowers** via Groq tool-calling — agent can answer:
+  - "what's my balance?" → `get_user_balance`
+  - "how many txs have I done?" → `get_user_tx_count`
+  - "am I a contract?" → `get_user_account_type`
+  - "what's gas right now?" → `get_network_status`
+  - "what's the balance of 0x…?" → `get_balance_of_address`
+- Optional auto-greet on startup (`STARTUP_GREET_ADDRESS`) for agent-to-agent chats
+- Configurable name + system prompt via env vars
+
+---
+
+## Architecture
+
+```
+web/                         # Next.js 15 app → Vercel
+├── app/                     # routes (/, /directory, /about)
+├── components/
+│   ├── chat/               # Sidebar, ConversationView, MessageBubble, etc.
+│   ├── shell/              # AppHeader, AppShell, Landing, SettingsPanel, Footer
+│   └── ui/                 # Avatar, AgentBadge, Spinner, PeerName
+├── context/
+│   └── ChatProvider.tsx    # XMTP client + state (conversations, messages, peers, pins, search)
+├── hooks/
+│   └── useKeyboardShortcuts.ts
+├── lib/                     # cn, format, wagmi, xmtp, peer, message, text, conversation, agents, notifications
+└── data/
+    └── agents.json         # public agent directory entries
+
+agent/                       # Node.js service → Railway
+└── src/
+    ├── index.ts            # Agent lifecycle, text handler, tool binding
+    ├── xmtp.ts             # createAgent (Agent.createFromEnv)
+    ├── groq.ts             # Groq client + tool-calling loop
+    ├── tools.ts            # 5 on-chain tools (viem reads on Base Sepolia)
+    ├── chain.ts            # viem public client + read helpers
+    └── generate-wallet.ts  # one-off: prints fresh PK + DB encryption key
+```
 
 ---
 
 ## Deploy: Web (Vercel)
 
-1. **Get a WalletConnect project ID** (free) — sign up at https://cloud.reown.com, create a project, copy the Project ID.
+1. Get a free WalletConnect/Reown project ID at https://cloud.reown.com.
+2. Push this repo to GitHub.
+3. In Vercel: New Project → import repo → **Root Directory = `web`**.
+4. Environment variable:
+   - `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` = your Reown ID
+5. Deploy.
 
-2. **Push this repo to GitHub.**
-
-3. **Import in Vercel**:
-   - New Project → pick the repo
-   - **Root Directory**: set to `web`
-   - Framework: Next.js (auto-detected)
-   - Environment Variables:
-     - `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` = (your Reown project ID)
-   - Deploy
-
-4. **Test**: open the URL, connect wallet (it'll prompt to switch to Base Sepolia), click **Enable XMTP messaging**, sign the request. You're ready.
+Future `git push` to `main` auto-redeploys.
 
 ---
 
 ## Deploy: Agent (Railway)
 
-### 1. Get a Groq API key
-- Sign up free at https://console.groq.com
-- Create an API key, copy it.
-
-### 2. Create the Railway service
-- New Project → **Deploy from GitHub repo** → pick this repo
-- After import, open the service → **Settings**:
-  - **Root Directory**: set to `agent`
-  - **Build Command**: leave blank (nixpacks default — `npm install`)
-  - **Start Command**: leave blank (uses `npm start` from `package.json`)
-
-### 3. Generate the agent's wallet
-- In the Railway service, open the **Shell** (top-right "..." → Open Shell, or the terminal tab in the service view).
-- Run:
-  ```
-  npm run generate-wallet
-  ```
-- Copy the printed `XMTP_WALLET_KEY`, `XMTP_DB_ENCRYPTION_KEY`, and the **public address**. Save the address somewhere — you'll DM it from the web app.
-
-### 4. Set environment variables (Railway → Variables)
+1. Sign up at https://console.groq.com, create an API key.
+2. Railway: New Project → Deploy from GitHub repo → **Root Directory = `agent`**.
+3. Open the service Shell, run `npm run generate-wallet`. Copy the three lines it prints.
+4. Service → **Variables**:
 
 | Name | Value |
 |---|---|
-| `XMTP_WALLET_KEY` | (from the generate-wallet output, starts with `0x`) |
-| `XMTP_DB_ENCRYPTION_KEY` | (from the generate-wallet output, 64 hex chars) |
+| `XMTP_WALLET_KEY` | `0x…` (from generate-wallet) |
+| `XMTP_DB_ENCRYPTION_KEY` | 64-hex string (from generate-wallet) |
 | `XMTP_ENV` | `dev` |
 | `XMTP_DB_DIRECTORY` | `/data` |
-| `GROQ_API_KEY` | (from console.groq.com) |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` |
-| `AGENT_NAME` | `Vee` (or whatever) |
-| `AGENT_SYSTEM_PROMPT` | (see `agent/.env.example` for a sample — make it conversational) |
+| `GROQ_API_KEY` | from console.groq.com |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` (default) |
+| `AGENT_NAME` | e.g. `Vee` |
+| `AGENT_SYSTEM_PROMPT` | (optional) — defaults to a friendly conversational prompt |
+| `BASE_SEPOLIA_RPC_URL` | (optional) custom RPC; defaults to public |
 
-### 5. Add a persistent volume (recommended)
-- Service → **Volumes** → New Volume
-- **Mount Path**: `/data`
-- Size: 1 GB is plenty.
+5. Service → **Volumes** → New Volume → Mount path `/data` (so the XMTP DB persists across restarts).
+6. Redeploy. Logs should show:
 
-Without a volume, the XMTP local DB resets on every redeploy. Agent identity (tied to the wallet) is preserved, but per-conversation MLS state is lost. With the volume, the agent has full continuity.
+```
+Agent address:  0x…
+Inbox ID:       …
+XMTP env:       dev
+Agent online. Listening for messages…
+```
 
-### 6. Redeploy
-- After setting env vars and adding the volume, trigger a redeploy (or it auto-redeploys when you push to GitHub).
-- Open the service **Logs** — you should see:
-  ```
-  Agent address:  0x...
-  Inbox ID:       ...
-  XMTP env:       dev
-  Agent online. Listening for messages…
-  ```
-
-### 7. Test end-to-end
-- Open the web app, connect a wallet, enable XMTP, paste the **agent's public address**, click **Open**, type a message, hit **Send**.
-- Within a few seconds you should see the agent's reply in the chat. The Railway logs will show the in/out lines.
+7. From the web app, paste the agent's address into "New chat" and send a message.
 
 ---
 
-## Step 6: Two agents talking to each other
+## Register an agent in the public directory
 
-Run a **second** agent with a different wallet and personality. Approach:
+Edit `web/data/agents.json`:
 
-1. **In Railway, add a second service** in the same project:
-   - **New** → **GitHub Repo** → pick the same repo
-   - Settings → **Root Directory**: `agent`
-2. **Generate a fresh wallet** for the second agent:
-   - Open the new service's Shell, run `npm run generate-wallet`.
-   - Save the new address (e.g. agent B's address).
-3. **Set env vars on the second service** — same shape, different values:
-   - `XMTP_WALLET_KEY` and `XMTP_DB_ENCRYPTION_KEY`: from the new generate-wallet output
-   - `XMTP_ENV`: `dev` (same as agent A)
-   - `XMTP_DB_DIRECTORY`: `/data` (and add a **separate** volume for this service)
-   - `GROQ_API_KEY`: same key is fine
-   - `AGENT_NAME`: e.g. `Zee`
-   - `AGENT_SYSTEM_PROMPT`: write a different personality (e.g. "You are Zee, a witty cynical agent who replies in short snarky one-liners. Never use exclamation marks.")
-4. **Kick off the conversation**: on **agent A's** service, add these two env vars:
-   - `STARTUP_GREET_ADDRESS` = agent B's public address
-   - `STARTUP_GREET_MESSAGE` = e.g. `yo Zee, you online?`
-5. Redeploy agent A. ~8 seconds after it comes up, it'll send the greeting to agent B. B's text handler will reply via Groq, A will reply, and they'll keep going.
-6. Watch both services' Logs side by side — you'll see the back-and-forth.
+```json
+[
+  {
+    "name": "Vee",
+    "address": "0xYourAgentAddressHere",
+    "description": "Friendly chat companion who can read your Base Sepolia balance.",
+    "tags": ["chat", "onchain"]
+  }
+]
+```
 
-To stop the auto-loop, just remove `STARTUP_GREET_ADDRESS` from agent A's env vars and redeploy. (Both agents will still respond when humans message them, but won't reignite each other.)
+Push to GitHub → Vercel rebuilds → the entry appears at `/directory` with a "Message" button that deep-links into a pre-filled new-chat modal. Anywhere this address shows up in a conversation, an "Agent" badge appears.
 
 ---
 
-## Environment variables — quick reference
+## Run a second agent (agent-to-agent chats)
 
-### Web (Vercel)
-| Name | Required | Notes |
-|---|---|---|
-| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | yes | From https://cloud.reown.com |
+1. In Railway, add a second service from the same GitHub repo (Root Directory = `agent`).
+2. Generate a fresh wallet in its Shell.
+3. Set its own env vars with a different `AGENT_NAME` and `AGENT_SYSTEM_PROMPT`.
+4. Mount a separate Railway volume at `/data`.
+5. On **agent A**'s service, add:
+   - `STARTUP_GREET_ADDRESS` = agent B's address
+   - `STARTUP_GREET_MESSAGE` = `yo, you up?`
+6. Redeploy agent A. It greets B → B replies via Groq → A replies → loop. Watch both logs.
 
-### Agent (Railway)
-| Name | Required | Notes |
-|---|---|---|
-| `XMTP_WALLET_KEY` | yes | 0x-prefixed 64-hex private key — agent's identity |
-| `XMTP_DB_ENCRYPTION_KEY` | yes | 64 hex chars (32 bytes) |
-| `XMTP_ENV` | yes | `dev` (must match the web app) |
-| `XMTP_DB_DIRECTORY` | recommended | `/data` if using a Railway volume |
-| `GROQ_API_KEY` | yes | From https://console.groq.com |
-| `GROQ_MODEL` | no | Default: `llama-3.3-70b-versatile` |
-| `AGENT_NAME` | no | Default: `Agent` |
-| `AGENT_SYSTEM_PROMPT` | no | Steers personality. Default is a generic friendly one. |
-| `STARTUP_GREET_ADDRESS` | no | If set, agent DMs this address on startup |
-| `STARTUP_GREET_MESSAGE` | no | Default: `hey, you up?` |
+To stop the loop, remove `STARTUP_GREET_ADDRESS` from A and redeploy. Both agents will still respond when humans message them.
 
 ---
 
-## Security notes
+## Tech
 
-- The `.gitignore` blocks `.env*` files — never commit them.
-- `XMTP_WALLET_KEY` is the agent's whole identity. If it leaks, anyone can impersonate the agent.
-- Use a fresh wallet per agent. Don't reuse a personal wallet.
-- Both XMTP `dev` and `production` are public networks — anything sent is end-to-end encrypted, but metadata (who messages whom, when) is visible to relayers.
+- **TypeScript** everywhere
+- **Web**: Next.js 15, React 19, Tailwind v4, framer-motion, sonner, lucide-react, boring-avatars, geist, RainbowKit, wagmi v2, viem
+- **Web XMTP**: `@xmtp/browser-sdk` (v7, MLS)
+- **Agent**: `@xmtp/agent-sdk`, `@xmtp/node-sdk` (transitive), `groq-sdk`, viem, tsx
+- **Hosting**: Vercel (web), Railway (agent)
+
+---
+
+## Local dev
+
+```
+cd web && npm install && npm run dev
+```
+
+You'll need `web/.env.local`:
+```
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_id
+```
+
+For the agent, see `agent/.env.example`.
+
+---
+
+## License
+
+MIT — fork it, change it, run your own.

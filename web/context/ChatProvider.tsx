@@ -180,6 +180,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       await client.conversations.sync();
       const all = await client.conversations.list();
       setConversations(all);
+
+      // Eagerly fetch the last message of each conversation so the sidebar
+      // previews aren't blank until you click each one.
+      await Promise.all(
+        all.map(async (conv) => {
+          try {
+            const last = await conv.lastMessage();
+            if (last) {
+              setMessagesByConvId((prev) => {
+                const existing = prev.get(conv.id) ?? [];
+                if (existing.some((m) => m.id === last.id)) return prev;
+                const next = new Map(prev);
+                next.set(conv.id, [...existing, last]);
+                return next;
+              });
+            }
+          } catch {
+            // ignore per-conv failures
+          }
+        }),
+      );
     } catch (e) {
       console.error("Failed to load conversations", e);
     } finally {
@@ -231,13 +252,34 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             if (cancelled || !msg) return;
             const convId = msg.conversationId;
 
-            setMessagesByConvId((prev) => {
-              const next = new Map(prev);
-              const existing = next.get(convId) ?? [];
-              if (existing.some((m) => m.id === msg.id)) return prev;
-              next.set(convId, [...existing, msg]);
-              return next;
-            });
+            // If this is the active conv, reload full messages list so
+            // attached .reactions on parent messages refresh too.
+            if (convId === activeIdRef.current) {
+              const conv = (await client.conversations.list()).find(
+                (c) => c.id === convId,
+              );
+              if (conv) {
+                try {
+                  const fresh = await conv.messages();
+                  setMessagesByConvId((prev) => {
+                    const next = new Map(prev);
+                    next.set(convId, fresh);
+                    return next;
+                  });
+                } catch {
+                  // fall through to append-only path below
+                }
+              }
+            } else {
+              // Background convs: just append for the sidebar preview.
+              setMessagesByConvId((prev) => {
+                const next = new Map(prev);
+                const existing = next.get(convId) ?? [];
+                if (existing.some((m) => m.id === msg.id)) return prev;
+                next.set(convId, [...existing, msg]);
+                return next;
+              });
+            }
 
             const isFromMe = msg.senderInboxId === client.inboxId;
             if (!isFromMe) {
