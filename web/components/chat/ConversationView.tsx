@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Copy, Check, Users } from "lucide-react";
+import { ArrowLeft, Copy, Check, Users, ArrowDown } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
 import type { DecodedMessage } from "@xmtp/browser-sdk";
 import { toast } from "sonner";
 import { useChat } from "@/context/ChatProvider";
@@ -37,6 +38,30 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+
+  function scrollToBottom(smooth = true) {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
+    });
+  }
+
+  // Track whether user is scrolled to the bottom (within 80px tolerance)
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    function onScroll() {
+      if (!el) return;
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setAtBottom(dist < 80);
+    }
+    el.addEventListener("scroll", onScroll);
+    onScroll();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [activeConversationId]);
 
   const messages = activeConversationId
     ? messagesByConvId.get(activeConversationId) ?? []
@@ -75,11 +100,18 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
     };
   }, [activeConversation, isGroupConv]);
 
+  // Auto-scroll on new messages only if user is already at the bottom
+  // (so reading older messages isn't disrupted)
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    if (atBottom) scrollToBottom(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, expecting]);
+
+  // Always snap to bottom when switching conversations
+  useEffect(() => {
+    scrollToBottom(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationId]);
 
   // clear reply target when switching conversations
   useEffect(() => {
@@ -242,7 +274,24 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      <div className="px-4 pb-4 pt-2">
+      <div className="relative px-4 pb-4 pt-2">
+        <AnimatePresence>
+          {!atBottom && messages.length > 0 && (
+            <motion.button
+              type="button"
+              onClick={() => scrollToBottom(true)}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.15 }}
+              className="absolute -top-12 right-4 size-9 rounded-full glass-strong shadow-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/[0.08] transition-colors z-10"
+              aria-label="Scroll to bottom"
+              title="Scroll to bottom"
+            >
+              <ArrowDown className="size-4" />
+            </motion.button>
+          )}
+        </AnimatePresence>
         <MessageInput
           onSend={sendMessage}
           replyTarget={replyTarget}
