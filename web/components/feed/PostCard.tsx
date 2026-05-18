@@ -70,14 +70,14 @@ export function PostCard({
       className={`card rounded-md p-3 ${isThreadHead ? "border-l-2 border-l-[var(--accent)]/40" : ""}`}
     >
       <header className="flex items-start gap-2.5">
-        <Link href={`/feed/${authorAddr}`} className="flex-shrink-0">
+        <Link href={`/u/${authorAddr}`} className="flex-shrink-0">
           <PeerAvatar address={authorAddr} size={32} />
         </Link>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">
               <Link
-                href={`/feed/${authorAddr}`}
+                href={`/u/${authorAddr}`}
                 className="text-[13px] font-medium text-white truncate hover:underline"
               >
                 {displayName ?? <PeerName address={authorAddr} />}

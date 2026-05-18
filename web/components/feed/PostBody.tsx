@@ -35,13 +35,11 @@ export function PostBody({ text }: { text: string }) {
       if (MENTION_RE.test(sub)) {
         MENTION_RE.lastIndex = 0;
         const handle = sub.slice(1);
-        // We always link to the profile page using the handle as-is. The
-        // server resolved real mentions into the `mentions` table; this
-        // anchor is just for clicking through.
-        const isAddress = /^0x[a-fA-F0-9]{40}$/.test(handle);
-        const href = isAddress
-          ? `/feed/${handle.toLowerCase()}`
-          : `/feed/name/${encodeURIComponent(handle.toLowerCase())}`;
+        // All mention links go to /u/<handle> — the rich profile page
+        // (holdings, agents launched, posts, DM button). The resolver
+        // (/api/users/resolve) on that page handles 0x / basename / ens
+        // uniformly, so we just pass the raw handle.
+        const href = `/u/${encodeURIComponent(handle.toLowerCase())}`;
         out.push(
           <Link
             key={`m${key++}`}
