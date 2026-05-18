@@ -4,6 +4,8 @@ import { createAgent } from "./xmtp.js";
 import { generateReply, type ChatTurn } from "./groq.js";
 import { buildToolsForPeer } from "./tools.js";
 
+const TOOL_NAMES = buildToolsForPeer(null).tools.map((t) => t.function.name);
+
 const MAX_HISTORY_TURNS = 12;
 
 async function main() {
@@ -19,7 +21,7 @@ async function main() {
     );
     console.log(`Personality:    ${process.env.AGENT_NAME ?? "Agent"}`);
     console.log(`Test URL:       ${getTestUrl(ctx.client)}`);
-    console.log("Tools:          on-chain reads on Base Sepolia enabled");
+    console.log(`Tools (${TOOL_NAMES.length}):      ${TOOL_NAMES.join(", ")}`);
     console.log("Agent online. Listening for messages…");
     console.log("==============================================");
 
