@@ -10,31 +10,27 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/users/resolve?handle=<0x | name.base.eth | name.eth>
  *
- * Single-source-of-truth resolver used by /dm/[handle] and /u/[handle]
- * (the public share-link surfaces). Returns:
+ * Single-source-of-truth resolver used by /dm/[handle] and /u/[handle].
+ * Returns:
  *
- *   { ok: true, address, basename, ens_name, on_signa: bool }
+ *   { ok: true, address, basename, ens_name, on_signa: bool, source: ... }
  *
- * Resolution order:
- *   1. If handle is 0x-prefixed 40-hex → lowercase it, look up in users
- *      table. address always returned even if not registered.
- *   2. If handle ends in .base.eth → ENSIP-19 reverse against Base via
- *      mainnet ENS resolver (Basenames). Then look up in users table.
- *   3. If handle ends in .eth → standard ENS resolve on Ethereum mainnet.
- *      Then look up in users table.
- *   4. Otherwise: try fuzzy match against users.basename / users.ens_name.
+ * Resolution strategy:
+ *   1. 0x address → use as-is, look up SIGNA metadata for it.
+ *   2. *.base.eth → web3.bio /basenames/ (verified working from Vercel
+ *      egress, sub-200ms)
+ *   3. *.eth     → ensideas.com (verified, ~40ms from Vercel) with
+ *      web3.bio /ens/ as a second backstop. viem getEnsAddress as a
+ *      last-resort tertiary that only works against a CCIP-capable RPC.
+ *   4. Any other string → loose match against users.basename or
+ *      users.ens_name (exact-match only — no PostgREST OR filter with
+ *      dots in values, that was the bug that 404'd vitalik.eth).
  *
- * `on_signa` is true iff the address has a row in the users table.
+ * After address is resolved, SIGNA metadata (basename / ens_name from
+ * the users table, on_signa flag) is looked up via a single `.eq.` query
+ * which PostgREST handles correctly.
  */
 
-// Default to publicnode.com — empirically the only common public RPC
-// that supports the viem v2 Universal Resolver's `resolveWithGateways`
-// call (needed for CCIP-read / wildcard / Basenames). Verified locally:
-//   ✓ publicnode.com:  vitalik.eth → 0xd8…6045   jesse.base.eth → 0x2211…7DA9
-//   ✗ cloudflare-eth:  reverts "Internal error" on resolveWithGateways
-//   ✗ public-rpc.com:  rejects the call shape
-//   ✗ rpc.ankr.com:    rejects the call shape
-// Override with ETHEREUM_RPC_URL for paid endpoints (Alchemy, Infura).
 const MAINNET_RPC =
   process.env.ETHEREUM_RPC_URL || "https://ethereum.publicnode.com";
 
@@ -47,21 +43,88 @@ function isHexAddress(s: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(s);
 }
 
-async function lookupSigna(address: string): Promise<{
+async function lookupSignaMetadata(address: string): Promise<{
   basename: string | null;
   ens_name: string | null;
   on_signa: boolean;
 }> {
-  const { data } = await supabase
-    .from("users")
-    .select("basename, ens_name")
-    .eq("address", address.toLowerCase())
-    .maybeSingle();
-  return {
-    basename: data?.basename ?? null,
-    ens_name: data?.ens_name ?? null,
-    on_signa: !!data,
-  };
+  try {
+    const { data } = await supabase
+      .from("users")
+      .select("basename, ens_name")
+      .eq("address", address.toLowerCase())
+      .maybeSingle();
+    return {
+      basename: data?.basename ?? null,
+      ens_name: data?.ens_name ?? null,
+      on_signa: !!data,
+    };
+  } catch {
+    return { basename: null, ens_name: null, on_signa: false };
+  }
+}
+
+type RestResult = { address: string; via: string } | null;
+
+async function tryEnsIdeas(name: string): Promise<RestResult> {
+  try {
+    const url = `https://api.ensideas.com/ens/resolve/${encodeURIComponent(name)}`;
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const j: { address?: string } = await res.json();
+    if (j.address && isHexAddress(j.address)) {
+      return { address: j.address.toLowerCase(), via: "ensideas" };
+    }
+    return null;
+  } catch (e) {
+    console.error(
+      `[resolve] ensideas threw for ${name}:`,
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
+}
+
+async function tryWeb3Bio(
+  name: string,
+  platform: "ens" | "basenames",
+): Promise<RestResult> {
+  try {
+    const url = `https://api.web3.bio/profile/${platform}/${encodeURIComponent(name)}`;
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const j: { address?: string } = await res.json();
+    if (j.address && isHexAddress(j.address)) {
+      return { address: j.address.toLowerCase(), via: `web3.bio/${platform}` };
+    }
+    return null;
+  } catch (e) {
+    console.error(
+      `[resolve] web3.bio threw for ${name}:`,
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
+}
+
+async function tryViem(name: string): Promise<RestResult> {
+  try {
+    const resolved = await mainnetClient.getEnsAddress({ name });
+    if (resolved) return { address: resolved.toLowerCase(), via: "viem" };
+    return null;
+  } catch (e) {
+    console.error(
+      `[resolve] viem threw for ${name}:`,
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -77,7 +140,7 @@ export async function GET(req: NextRequest) {
 
   // 1. Direct 0x address.
   if (isHexAddress(handle)) {
-    const meta = await lookupSigna(handle);
+    const meta = await lookupSignaMetadata(handle);
     return NextResponse.json({
       ok: true,
       handle,
@@ -89,126 +152,78 @@ export async function GET(req: NextRequest) {
 
   // 2 + 3. ENS-shaped (includes .base.eth and .eth).
   if (handle.endsWith(".eth")) {
-    let address: string | null = null;
     let normalized: string;
     try {
       normalized = normalize(handle);
     } catch {
       return NextResponse.json(
-        { ok: false, error: "invalid_name" },
+        { ok: false, handle: rawHandle, error: "invalid_name" },
         { status: 400 },
       );
     }
 
-    // First try users table (faster, and works for Basenames we've cached).
-    const { data: viaDb } = await supabase
-      .from("users")
-      .select("address")
-      .or(`basename.eq.${normalized},ens_name.eq.${normalized}`)
-      .maybeSingle();
-    if (viaDb?.address) {
-      address = viaDb.address;
+    let result: RestResult = null;
+
+    if (normalized.endsWith(".base.eth")) {
+      // Basenames: web3.bio /basenames/ is most reliable
+      result = await tryWeb3Bio(normalized, "basenames");
+      if (!result) result = await tryViem(normalized);
+    } else {
+      // Plain ENS: ensideas is fastest, then web3.bio, then viem
+      result = await tryEnsIdeas(normalized);
+      if (!result) result = await tryWeb3Bio(normalized, "ens");
+      if (!result) result = await tryViem(normalized);
     }
 
-    // Fallback to live ENS resolve. Two paths in order — whichever
-    // returns an address first wins:
-    //   (a) viem getEnsAddress against MAINNET_RPC (universal resolver
-    //       — handles .eth + .base.eth via CCIP-read)
-    //   (b) REST fallback against ensdata.net (free, no key, JSON,
-    //       resolves both .eth and .base.eth) — safety net for when
-    //       Vercel serverless egress has weirdness with the RPC.
-    if (!address) {
-      console.log(
-        `[resolve] cache miss — live lookup ${normalized} via ${MAINNET_RPC}`,
-      );
-      try {
-        const resolved = await mainnetClient.getEnsAddress({
-          name: normalized,
-        });
-        console.log(
-          `[resolve] viem result for ${normalized}: ${resolved ?? "null"}`,
-        );
-        if (resolved) address = resolved.toLowerCase();
-      } catch (e) {
-        console.error(
-          `[resolve] viem ENS lookup THREW for ${normalized}:`,
-          e instanceof Error ? e.message : e,
-        );
-      }
-
-      // (b) REST fallback via web3.bio (handles ENS + Basenames cleanly,
-      // free, no API key, no rate-limit weirdness).
-      if (!address) {
-        const platform = handle.endsWith(".base.eth")
-          ? "basenames"
-          : "ens";
-        const url = `https://api.web3.bio/profile/${platform}/${encodeURIComponent(normalized)}`;
-        console.log(`[resolve] REST fallback → ${url}`);
-        try {
-          const res = await fetch(url, {
-            cache: "no-store",
-            headers: { accept: "application/json" },
-          });
-          if (res.ok) {
-            const j: { address?: string } = await res.json();
-            console.log(
-              `[resolve] web3.bio response for ${normalized}: ${
-                j.address ?? "no_address_field"
-              }`,
-            );
-            if (j.address && /^0x[a-fA-F0-9]{40}$/.test(j.address)) {
-              address = j.address.toLowerCase();
-            }
-          } else {
-            console.log(
-              `[resolve] web3.bio HTTP ${res.status} for ${normalized}`,
-            );
-          }
-        } catch (e) {
-          console.error(
-            `[resolve] web3.bio THREW for ${normalized}:`,
-            e instanceof Error ? e.message : e,
-          );
-        }
-      }
-    }
-
-    if (!address) {
+    if (!result) {
       return NextResponse.json(
         {
           ok: false,
           handle: rawHandle,
           error: "unresolvable",
           message:
-            "couldn't resolve this name to a wallet via SIGNA, Basenames, or ENS",
+            "couldn't resolve this name via ensideas, web3.bio, or viem",
         },
         { status: 404 },
       );
     }
 
-    const meta = await lookupSigna(address);
+    const meta = await lookupSignaMetadata(result.address);
     return NextResponse.json({
       ok: true,
       handle: rawHandle,
-      address,
+      address: result.address,
       ...meta,
-      source: handle.endsWith(".base.eth") ? "basename" : "ens",
+      source: result.via,
     });
   }
 
-  // 4. Fuzzy match against users table.
-  const { data: viaFuzzy } = await supabase
-    .from("users")
-    .select("address, basename, ens_name")
-    .or(`basename.eq.${handle},ens_name.eq.${handle}`)
-    .maybeSingle();
-  if (viaFuzzy?.address) {
+  // 4. Fuzzy match against users table by exact basename or ens_name.
+  // We do TWO single-column eq queries instead of one OR with dots,
+  // because PostgREST's .or() string parser tokenizes on dots and breaks
+  // for values like "vitalik.eth".
+  const [byBasename, byEns] = await Promise.all([
+    supabase
+      .from("users")
+      .select("address, basename, ens_name")
+      .eq("basename", handle)
+      .maybeSingle()
+      .then((r) => r.data),
+    supabase
+      .from("users")
+      .select("address, basename, ens_name")
+      .eq("ens_name", handle)
+      .maybeSingle()
+      .then((r) => r.data),
+  ]);
+  const match = byBasename ?? byEns;
+  if (match?.address) {
     return NextResponse.json({
       ok: true,
       handle: rawHandle,
-      address: viaFuzzy.address,
-      basename: viaFuzzy.basename,
-      ens_name: viaFuzzy.ens_name,
+      address: match.address,
+      basename: match.basename,
+      ens_name: match.ens_name,
       on_signa: true,
       source: "users_table",
     });
