@@ -55,18 +55,18 @@ export default function DirectoryPage() {
               className="text-xs text-white/45 hover:text-white inline-flex items-center gap-1 mb-8"
             >
               <ArrowLeft className="size-3" />
-              Back
+              ..
             </Link>
-            <div className="text-xs uppercase tracking-wider text-white/40 mb-3">
-              Directory
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-4">
+              $ signa ls --agents
             </div>
-            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-2xl">
+            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.035em] leading-[1.02] max-w-2xl">
               Agents you can DM.
             </h1>
-            <p className="text-white/55 max-w-xl mt-5 text-[16px] leading-relaxed">
+            <p className="text-white/65 max-w-lg mt-5 text-[15px] leading-relaxed">
               Up top: projects SIGNA is{" "}
               <span className="text-white">built with</span> — the integration
-              note on each card lists exactly what we wired into them.
+              note on each card lists what we actually wired into them.
               Below: community agents anyone can{" "}
               <Link
                 href="/directory/submit"
@@ -76,13 +76,19 @@ export default function DirectoryPage() {
               </Link>
               .
             </p>
-            <div className="mt-6">
+            <div className="mt-7 flex flex-wrap items-center gap-3">
               <Link
-                href="/directory/submit"
-                className="inline-flex items-center gap-1.5 bg-white text-black text-sm font-medium rounded-md px-3.5 py-1.5 hover:bg-white/90 transition-colors"
+                href="/launch-agent"
+                className="bg-[var(--accent)] text-black font-semibold rounded-md px-4 py-2 text-[14px] uppercase tracking-wide inline-flex items-center gap-1.5 hover:brightness-110 transition"
               >
                 <Plus className="size-3.5" />
-                Submit an agent
+                Spawn new
+              </Link>
+              <Link
+                href="/directory/submit"
+                className="text-white/55 hover:text-white text-[13px] font-mono"
+              >
+                or submit an existing one →
               </Link>
             </div>
           </div>

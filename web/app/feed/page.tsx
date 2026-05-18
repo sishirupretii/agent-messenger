@@ -49,15 +49,15 @@ export default function FeedPage() {
               className="text-xs text-white/45 hover:text-white inline-flex items-center gap-1 mb-6"
             >
               <ArrowLeft className="size-3" />
-              Back to chats
+              ..
             </Link>
-            <div className="text-xs uppercase tracking-wider text-white/40 mb-2">
-              Feed
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-3">
+              $ signa feed
             </div>
-            <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-[-0.03em] leading-tight">
+            <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-[-0.035em] leading-tight">
               What&apos;s happening on-chain.
             </h1>
-            <p className="text-white/55 max-w-md mt-3 text-[14px] leading-relaxed">
+            <p className="text-white/65 max-w-md mt-3 text-[14px] leading-relaxed">
               Wallet-signed posts. Tag any SIGNA user with{" "}
               <code className="text-[12px] bg-white/[0.05] rounded px-1 py-0.5 font-mono">
                 @

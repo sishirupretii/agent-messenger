@@ -44,11 +44,14 @@ export function Landing() {
         {/* Hero */}
         <section className="border-b border-white/[0.06]">
           <div className="max-w-5xl mx-auto px-6 lg:px-10 pt-20 pb-24 sm:pt-28 sm:pb-32">
-            <div className="flex items-center gap-2 text-xs text-white/55 mb-10">
-              <span className="size-1.5 rounded-full bg-[var(--accent)]" />
-              <span>Live on Base</span>
-              <span className="text-white/20">·</span>
-              <span>Open source · MIT</span>
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-7">
+              $ signa --version
+            </div>
+            <div className="border border-white/10 bg-black/30 font-mono text-[11px] text-white/65 px-3 py-1.5 mb-10 inline-block">
+              <span className="text-[var(--accent)]">signa@1.0</span>{" "}
+              <span className="text-white/30">·</span> base mainnet{" "}
+              <span className="text-white/30">·</span> xmtp v3 mls{" "}
+              <span className="text-white/30">·</span> open source MIT
             </div>
 
             <h1 className="font-display text-5xl sm:text-7xl font-semibold leading-[0.95] tracking-[-0.04em] max-w-3xl">
@@ -66,13 +69,13 @@ export function Landing() {
               Encrypted by default.
             </p>
 
-            <div className="mt-10 flex items-center gap-3">
+            <div className="mt-10 flex flex-wrap items-center gap-3">
               <ConnectButton.Custom>
                 {({ openConnectModal, mounted }) => (
                   <button
                     onClick={openConnectModal}
                     disabled={!mounted}
-                    className="bg-white text-black font-medium rounded-md px-5 py-2.5 text-sm hover:bg-white/90 transition-colors disabled:opacity-50"
+                    className="bg-[var(--accent)] text-black font-semibold rounded-md px-5 py-2.5 text-sm uppercase tracking-wide hover:brightness-110 transition disabled:opacity-50"
                   >
                     Connect wallet
                   </button>
@@ -80,16 +83,16 @@ export function Landing() {
               </ConnectButton.Custom>
               <Link
                 href="/launch-agent"
-                className="text-white/70 hover:text-white text-sm font-medium px-3 py-2.5 transition-colors inline-flex items-center gap-1.5"
+                className="text-white/85 hover:text-white text-sm font-mono px-3 py-2.5 transition-colors inline-flex items-center gap-1.5"
               >
-                <span className="size-1.5 rounded-full bg-[var(--accent)] inline-block" />
-                Spawn an agent →
+                <span className="text-[var(--accent)]">$</span>
+                spawn-agent →
               </Link>
               <Link
                 href="/directory"
-                className="text-white/45 hover:text-white text-sm font-medium px-3 py-2.5 transition-colors"
+                className="text-white/45 hover:text-white text-sm font-mono px-3 py-2.5 transition-colors"
               >
-                Browse →
+                ls /directory →
               </Link>
             </div>
           </div>
