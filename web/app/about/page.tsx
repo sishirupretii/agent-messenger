@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Github } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 
@@ -10,18 +10,17 @@ const STACK: Array<{ k: string; v: string; hint?: string }> = [
   { k: "Wallet identity", v: "Base Sepolia", hint: "XMTP itself runs on its own network" },
   { k: "Web", v: "Next.js 15, React 19, Tailwind v4", hint: "RainbowKit + wagmi + viem" },
   { k: "Browser SDK", v: "@xmtp/browser-sdk v7", hint: "MLS-based" },
-  { k: "Agent runtime", v: "Node.js + @xmtp/agent-sdk", hint: "Local SQLite, persisted via Railway volume" },
+  { k: "Agent runtime", v: "Node.js + @xmtp/agent-sdk", hint: "Local SQLite, persisted via volume" },
   { k: "LLM", v: "Llama 3.3 70B on Groq", hint: "Tool-calling against on-chain reads via viem" },
-  { k: "Hosting", v: "Vercel (web) + Railway (agent)", hint: "Auto-deploys on push to main" },
-  { k: "License", v: "MIT", hint: "Fork, change, run your own" },
+  { k: "License", v: "MIT", hint: "Self-hostable" },
 ];
 
 const FACTS: Array<[string, string]> = [
   ["Messages", "Encrypted with MLS. Stored encrypted on XMTP nodes."],
   ["Identity", "Derived from a signature, not a password."],
   ["History", "Lives in your browser's IndexedDB + on XMTP nodes."],
+  ["Payments", "Real ETH transfers on Base Sepolia. In-chat receipts via TransactionReference."],
   ["Agent reads", "viem.getBalance / getTransactionCount / getTransaction / ENS"],
-  ["Agent model", "llama-3.3-70b-versatile (overridable per service)"],
   ["Memory", "Rebuilt from XMTP conversation history every reply"],
 ];
 
@@ -47,9 +46,9 @@ export default function AboutPage() {
             </h1>
             <p className="text-white/55 max-w-xl mt-6 text-[16px] leading-relaxed">
               Agent Messenger is a working reference for what it looks like when
-              you wire XMTP directly into LLM agents on a public testnet.
-              Nothing's gated, custodial, or paywalled. Fork it, run your own
-              agents, fill the directory.
+              you wire XMTP directly into LLM agents on a public testnet, with
+              real in-chat payments alongside. Nothing&apos;s gated, custodial,
+              or paywalled.
             </p>
           </div>
         </section>
@@ -100,23 +99,6 @@ export default function AboutPage() {
                 ))}
               </div>
             </div>
-          </div>
-        </section>
-
-        <section className="border-b border-white/[0.06]">
-          <div className="max-w-5xl mx-auto px-6 lg:px-10 py-12 flex flex-wrap items-center justify-between gap-4">
-            <p className="text-sm text-white/55">
-              Read the source. Run an agent. Send a PR.
-            </p>
-            <a
-              href="https://github.com/sishirupretii/agent-messenger"
-              target="_blank"
-              rel="noreferrer"
-              className="bg-white text-black font-medium rounded-md px-4 py-2 text-sm hover:bg-white/90 transition-colors inline-flex items-center gap-1.5"
-            >
-              <Github className="size-3.5" />
-              github.com/sishirupretii/agent-messenger
-            </a>
           </div>
         </section>
       </main>

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Github, ExternalLink, Trash2, LogOut, Volume2, BellRing, UserPen, Droplets } from "lucide-react";
+import { X, ExternalLink, Trash2, LogOut, Volume2, BellRing, UserPen, Droplets } from "lucide-react";
 import { useState } from "react";
 import { useDisconnect } from "wagmi";
 import { toast } from "sonner";
@@ -238,17 +238,8 @@ export function SettingsPanel({
               />
             </Section>
 
-            <div className="border-t border-white/[0.06] pt-3 mt-2">
-              <a
-                href="https://github.com/sishirupretii/agent-messenger"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors"
-              >
-                <Github className="size-3.5" />
-                View source on GitHub
-                <ExternalLink className="size-3 opacity-50" />
-              </a>
+            <div className="border-t border-white/[0.06] pt-3 mt-2 text-[11px] text-white/40">
+              Agent Messenger · MIT · v0.1
             </div>
           </motion.div>
         </motion.div>

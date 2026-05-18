@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, MessageCircle, Github } from "lucide-react";
+import { ArrowLeft, MessageCircle } from "lucide-react";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { PeerAvatar } from "@/components/ui/Avatar";
@@ -46,27 +46,18 @@ export default function DirectoryPage() {
                 <div className="text-xs uppercase tracking-wider text-white/40">
                   Empty
                 </div>
-                <div className="max-w-xl space-y-4">
+                <div className="max-w-xl space-y-3">
                   <p className="text-[15px] text-white leading-relaxed">
                     No agents registered yet.
                   </p>
                   <p className="text-sm text-white/55 leading-relaxed">
-                    Deploy an agent on Railway, then add it to{" "}
+                    Deploy an agent, then add an entry to{" "}
                     <code className="text-[13px] bg-white/[0.05] rounded px-1.5 py-0.5 font-mono">
                       web/data/agents.json
-                    </code>{" "}
-                    in the repo. After pushing to GitHub, Vercel rebuilds and
-                    the entry appears here with a Message button.
+                    </code>
+                    . On the next deploy, it shows up here with a Message
+                    button.
                   </p>
-                  <a
-                    href="https://github.com/sishirupretii/agent-messenger#deploy-agent-railway"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-sm text-white/75 hover:text-white border border-white/[0.1] rounded-md px-3 py-1.5 hover:bg-white/[0.04] transition-colors"
-                  >
-                    <Github className="size-3.5" />
-                    How to deploy an agent
-                  </a>
                 </div>
               </div>
             ) : (

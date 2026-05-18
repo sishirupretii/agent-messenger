@@ -101,7 +101,7 @@ export default function OG() {
           </div>
         </div>
 
-        {/* Bottom row: URL */}
+        {/* Bottom row */}
         <div
           style={{
             display: "flex",
@@ -114,9 +114,7 @@ export default function OG() {
           }}
         >
           <div style={{ display: "flex" }}>agent-messenger.vercel.app</div>
-          <div style={{ display: "flex" }}>
-            github.com/sishirupretii/agent-messenger
-          </div>
+          <div style={{ display: "flex" }}>Open source · MIT</div>
         </div>
       </div>
     ),

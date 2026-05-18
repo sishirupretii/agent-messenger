@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { ArrowUpRight, Github } from "lucide-react";
 import { LogoMark } from "@/components/ui/LogoMark";
 import { Footer } from "./Footer";
 
@@ -14,7 +13,7 @@ const ROWS: Array<{
   { k: "Transport", v: "XMTP V3 (MLS)", hint: "End-to-end encrypted, decentralized" },
   { k: "Network", v: "Base Sepolia", hint: "Wallet identity; XMTP itself is chain-agnostic" },
   { k: "Agents", v: "Llama 3.3 70B on Groq", hint: "With tool-calling against on-chain data" },
-  { k: "Source", v: "MIT", hint: "github.com/sishirupretii/agent-messenger" },
+  { k: "License", v: "MIT", hint: "Open source, self-hostable" },
 ];
 
 export function Landing() {
@@ -28,15 +27,7 @@ export function Landing() {
               <span className="size-1.5 rounded-full bg-[var(--accent)]" />
               <span>Live on Base Sepolia</span>
               <span className="text-white/20">·</span>
-              <a
-                href="https://github.com/sishirupretii/agent-messenger"
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-white transition-colors inline-flex items-center gap-1"
-              >
-                Source on GitHub
-                <ArrowUpRight className="size-3" />
-              </a>
+              <span>Open source · MIT</span>
             </div>
 
             <h1 className="text-5xl sm:text-7xl font-semibold leading-[0.95] tracking-[-0.04em] max-w-3xl">
@@ -137,8 +128,12 @@ export function Landing() {
                   payment receipts and thanks you for them.
                 </Feature>
                 <Feature title="Self-hostable">
-                  Fork the repo, deploy web to Vercel + agent to Railway.
-                  Add your agent to <code className="text-[13px] bg-white/[0.05] rounded px-1.5 py-0.5 font-mono">data/agents.json</code> for it to show in the directory.
+                  Designed to be forked. Deploy the web app to Vercel, the
+                  agent to Railway. Add agents to{" "}
+                  <code className="text-[13px] bg-white/[0.05] rounded px-1.5 py-0.5 font-mono">
+                    data/agents.json
+                  </code>{" "}
+                  to surface them in the directory.
                 </Feature>
               </div>
             </div>
@@ -152,28 +147,17 @@ export function Landing() {
               <LogoMark size={20} className="text-white" />
               <span className="text-[15px] font-medium">Ready when you are.</span>
             </div>
-            <div className="flex items-center gap-3">
-              <ConnectButton.Custom>
-                {({ openConnectModal, mounted }) => (
-                  <button
-                    onClick={openConnectModal}
-                    disabled={!mounted}
-                    className="bg-white text-black font-medium rounded-md px-4 py-2 text-sm hover:bg-white/90 transition-colors disabled:opacity-50"
-                  >
-                    Connect wallet
-                  </button>
-                )}
-              </ConnectButton.Custom>
-              <a
-                href="https://github.com/sishirupretii/agent-messenger"
-                target="_blank"
-                rel="noreferrer"
-                className="text-white/70 hover:text-white text-sm font-medium px-3 py-2 transition-colors inline-flex items-center gap-1.5"
-              >
-                <Github className="size-3.5" />
-                Read the source
-              </a>
-            </div>
+            <ConnectButton.Custom>
+              {({ openConnectModal, mounted }) => (
+                <button
+                  onClick={openConnectModal}
+                  disabled={!mounted}
+                  className="bg-white text-black font-medium rounded-md px-4 py-2 text-sm hover:bg-white/90 transition-colors disabled:opacity-50"
+                >
+                  Connect wallet
+                </button>
+              )}
+            </ConnectButton.Custom>
           </div>
         </section>
       </main>

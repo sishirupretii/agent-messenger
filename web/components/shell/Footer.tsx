@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { Github } from "lucide-react";
 
 export function Footer() {
   return (
@@ -15,15 +14,6 @@ export function Footer() {
           <Link href="/directory" className="hover:text-white transition-colors">
             Directory
           </Link>
-          <a
-            href="https://github.com/sishirupretii/agent-messenger"
-            target="_blank"
-            rel="noreferrer"
-            className="hover:text-white transition-colors inline-flex items-center gap-1"
-          >
-            <Github className="size-3" />
-            Source
-          </a>
         </div>
       </div>
     </footer>
