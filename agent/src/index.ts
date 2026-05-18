@@ -4,14 +4,6 @@ import { createAgent } from "./xmtp.js";
 import { generateReply, type ChatTurn } from "./groq.js";
 
 const MAX_HISTORY_TURNS = 12;
-const conversationHistory = new Map<string, ChatTurn[]>();
-
-function pushTurn(convoId: string, turn: ChatTurn) {
-  const history = conversationHistory.get(convoId) ?? [];
-  history.push(turn);
-  while (history.length > MAX_HISTORY_TURNS) history.shift();
-  conversationHistory.set(convoId, history);
-}
 
 async function main() {
   const agent = await createAgent();
@@ -53,18 +45,29 @@ async function main() {
       const incoming = ctx.message.content;
       if (!incoming || !incoming.trim()) return;
 
-      const convoId = ctx.message.conversationId;
-      pushTurn(convoId, { role: "user", content: incoming });
+      // Pull recent messages from the conversation as Groq context.
+      // This means agent memory persists naturally via XMTP's local DB
+      // (and survives restarts when a Railway volume is mounted).
+      const recent = await ctx.conversation.messages({
+        limit: MAX_HISTORY_TURNS * 2,
+      });
 
-      const history = conversationHistory.get(convoId) ?? [];
+      const history: ChatTurn[] = recent
+        .filter((m) => typeof m.content === "string" && (m.content as string).trim())
+        .map((m) => ({
+          role:
+            m.senderInboxId === ctx.client.inboxId
+              ? ("assistant" as const)
+              : ("user" as const),
+          content: m.content as string,
+        }));
+
       const reply = await generateReply(history);
-      pushTurn(convoId, { role: "assistant", content: reply });
-
       await ctx.conversation.sendText(reply);
 
       const short = (s: string) => s.replace(/\s+/g, " ").slice(0, 80);
       console.log(
-        `[${convoId.slice(0, 8)}] in: "${short(incoming)}" | out: "${short(reply)}"`,
+        `[${ctx.message.conversationId.slice(0, 8)}] in: "${short(incoming)}" | out: "${short(reply)}"`,
       );
     } catch (e) {
       console.error("Failed to handle text message:", e);
