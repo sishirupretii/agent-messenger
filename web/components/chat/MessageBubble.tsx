@@ -11,6 +11,7 @@ import { renderTextWithLinks } from "@/lib/text";
 import { normalizeMessageContent } from "@/lib/message";
 import { ReactionPicker } from "./ReactionPicker";
 import { ReactionRow } from "./ReactionRow";
+import { PeerName } from "@/components/ui/PeerName";
 import { useChat } from "@/context/ChatProvider";
 
 export function MessageBubble({
@@ -18,12 +19,14 @@ export function MessageBubble({
   isMine,
   showTime,
   senderLabel,
+  senderAddress,
   onReply,
 }: {
   message: DecodedMessage;
   isMine: boolean;
   showTime: boolean;
   senderLabel?: string;
+  senderAddress?: string;
   onReply: (msg: DecodedMessage) => void;
 }) {
   const { sendReaction, ownInboxId } = useChat();
@@ -76,8 +79,12 @@ export function MessageBubble({
         )}
       >
         {senderLabel && !isMine && (
-          <span className="text-[10px] font-mono text-white/40 pl-2">
-            {senderLabel}
+          <span className="text-[10px] text-white/40 pl-2 font-medium">
+            {senderAddress ? (
+              <PeerName address={senderAddress} fallback={senderLabel} />
+            ) : (
+              <span className="font-mono">{senderLabel}</span>
+            )}
           </span>
         )}
         <div className="relative">

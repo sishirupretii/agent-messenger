@@ -39,6 +39,9 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const [memberAddresses, setMemberAddresses] = useState<Map<string, string>>(
+    new Map(),
+  );
 
   function scrollToBottom(smooth = true) {
     const el = scrollRef.current;
@@ -80,17 +83,30 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
   const isAgent = !isGroupConv && isKnownAgentAddress(peerAddress);
   const knownAgent = isAgent ? getKnownAgent(peerAddress) : null;
 
-  // load group member count
+  // load group member count + inbox→address map
   useEffect(() => {
     if (!activeConversation || !isGroupConv) {
       setMemberCount(null);
+      setMemberAddresses(new Map());
       return;
     }
     let cancelled = false;
     activeConversation
       .members()
-      .then((m) => {
-        if (!cancelled) setMemberCount(m.length);
+      .then((members) => {
+        if (cancelled) return;
+        setMemberCount(members.length);
+        const map = new Map<string, string>();
+        for (const m of members) {
+          const identifiers = (
+            m as unknown as {
+              accountIdentifiers?: Array<{ identifier: string }>;
+            }
+          ).accountIdentifiers;
+          const addr = identifiers?.[0]?.identifier;
+          if (addr) map.set(m.inboxId, addr.toLowerCase());
+        }
+        setMemberAddresses(map);
       })
       .catch(() => {
         if (!cancelled) setMemberCount(null);
@@ -264,8 +280,12 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
             prev.senderInboxId !== m.senderInboxId ||
             (prevDate && myDate && !sameDay(prevDate, myDate));
           let senderLabel: string | undefined;
+          let senderAddress: string | undefined;
           if (isGroupConv && !isMine && isFirstInRun) {
-            senderLabel = `${m.senderInboxId.slice(0, 6)}…${m.senderInboxId.slice(-4)}`;
+            senderAddress = memberAddresses.get(m.senderInboxId);
+            senderLabel = senderAddress
+              ? `${senderAddress.slice(0, 6)}…${senderAddress.slice(-4)}`
+              : `${m.senderInboxId.slice(0, 6)}…${m.senderInboxId.slice(-4)}`;
           }
 
           return (
@@ -276,6 +296,7 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
                 isMine={isMine}
                 showTime={isLastInRun}
                 senderLabel={senderLabel}
+                senderAddress={senderAddress}
                 onReply={startReply}
               />
             </Fragment>
