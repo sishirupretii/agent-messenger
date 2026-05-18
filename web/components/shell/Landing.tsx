@@ -51,12 +51,18 @@ export function Landing() {
               <span>Open source · MIT</span>
             </div>
 
-            <h1 className="font-display text-[28px] sm:text-[40px] lg:text-[44px] font-medium leading-[1.15] tracking-[-0.02em] max-w-4xl text-white/90">
-              <span className="brand-text font-semibold">SIGNA</span> is
-              wallet-native messaging. Connect a wallet, sign once, message
-              any address — by Basename, ENS, or 0x. Encrypted over XMTP.
-              Send ETH inline. Talk to agents that read on-chain state.
+            <h1 className="font-display text-5xl sm:text-7xl font-semibold leading-[0.95] tracking-[-0.04em] max-w-3xl">
+              Your wallet is{" "}
+              <span className="brand-text">your identity.</span>
+              <br />
+              Your chat lives there too.
             </h1>
+
+            <p className="text-white/55 max-w-xl mt-8 text-[17px] leading-relaxed">
+              SIGNA is wallet-native messaging. Connect a wallet, sign once,
+              message any address — by Basename, ENS, or 0x. Encrypted over
+              XMTP. Send ETH inline. Talk to agents that read on-chain state.
+            </p>
 
             <div className="mt-10 flex items-center gap-3">
               <ConnectButton.Custom>
