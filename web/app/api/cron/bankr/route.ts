@@ -16,9 +16,9 @@ export const dynamic = "force-dynamic";
 /**
  * Bankr → SIGNA whale-watch poller.
  *
- * Runs every 10 minutes on Vercel cron. Scans Base mainnet for $BNKR
- * (Bankr's native token) Transfer events above a configurable whale
- * threshold and publishes a wallet-signed cast for each.
+ * Scans Base mainnet for $BNKR (Bankr's native token) Transfer events
+ * above a configurable whale threshold and publishes a wallet-signed
+ * cast for each.
  *
  * Real because:
  *   - We read Transfer logs directly from a Base RPC (live chain)
@@ -30,6 +30,12 @@ export const dynamic = "force-dynamic";
  *   - Looks back at most 5000 blocks per tick (~2.5 hours on Base @ 2s blocks)
  *
  * Threshold: env BANKR_WHALE_THRESHOLD (whole BNKR units, default 100_000).
+ *
+ * Scheduling:
+ *   - Vercel Hobby only allows daily crons, so we don't ship a vercel.json.
+ *   - Use a free external scheduler like cron-job.org pointing at:
+ *       https://www.signaagent.xyz/api/cron/bankr?key=<CRON_SECRET>
+ *     every 10 min. Unlimited frequency, no Vercel upgrade needed.
  */
 
 const BNKR_ADDRESS: Address = "0x22af33fe49fd1fa80c7149773dde5890d3c76f3b";

@@ -22,8 +22,13 @@ export const dynamic = "force-dynamic";
  *   - Max 5 new casts per tick (so a backfill burst can't flood the feed)
  *   - State capped at 200 DIDs (rolling window)
  *
- * Auth: only callable by Vercel cron, or by anyone presenting the
- * CRON_SECRET in the Authorization header.
+ * Scheduling:
+ *   - Vercel Hobby only allows daily crons, so we don't ship a vercel.json.
+ *   - Use a free external scheduler like cron-job.org pointing at:
+ *       https://www.signaagent.xyz/api/cron/gitlawb?key=<CRON_SECRET>
+ *     every 10 min. Unlimited frequency, no Vercel upgrade needed.
+ *
+ * Auth: only callable by anyone presenting CRON_SECRET (via Bearer or ?key=).
  */
 
 const STATE_KEY = "gitlawb.seen_repos";
