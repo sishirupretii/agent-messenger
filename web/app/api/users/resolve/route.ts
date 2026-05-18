@@ -128,6 +128,25 @@ async function tryViem(name: string): Promise<RestResult> {
 }
 
 export async function GET(req: NextRequest) {
+  try {
+    return await handleResolve(req);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack?.split("\n").slice(0, 4).join("\n") : "";
+    console.error("[resolve] uncaught:", msg, stack);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "internal",
+        message: msg,
+        stack,
+      },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleResolve(req: NextRequest) {
   const rawHandle = (req.nextUrl.searchParams.get("handle") ?? "").trim();
   if (!rawHandle) {
     return NextResponse.json({ error: "missing_handle" }, { status: 400 });
