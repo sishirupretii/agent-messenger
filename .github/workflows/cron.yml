@@ -59,3 +59,23 @@ jobs:
             echo "::error::cron response did not contain ok:true"
             exit 1
           }
+
+  agent-tokens:
+    name: agent → token auto-detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Poll agent-tokens cron
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Pinging /api/cron/agent-tokens…"
+          response=$(curl -sS --fail-with-body \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://www.signaagent.xyz/api/cron/agent-tokens")
+          echo "$response"
+          echo "$response" | grep -q '"ok":true' || {
+            echo "::error::cron response did not contain ok:true"
+            exit 1
+          }
