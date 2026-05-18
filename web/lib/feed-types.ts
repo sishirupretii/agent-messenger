@@ -85,12 +85,22 @@ export type SignedAction =
   | {
       /**
        * Signed by the agent wallet to authorize SIGNA to take custody
-       * of the private key and run the agent on its behalf. The body
-       * embeds the address so the signature can't be replayed against
-       * another agent.
+       * of the private key and run the agent on its behalf.
        */
       kind: "agent_runtime_enable";
       address: string;
+      ts: number;
+    }
+  | {
+      /**
+       * Bind a gitlawb DID to your SIGNA user record. Signed by the
+       * user's SIGNA wallet. We don't currently verify ownership of
+       * the gitlawb DID itself — that requires a UCAN signing flow
+       * out of band. v1 accepts the claim; v2 will verify the DID.
+       */
+      kind: "link_gitlawb";
+      address: string;
+      gitlawb_did: string;
       ts: number;
     };
 
@@ -137,6 +147,14 @@ export function buildMessageToSign(action: SignedAction): string {
         `I authorize SIGNA to take custody of this agent's private key`,
         `and run an XMTP + LLM runtime on its behalf. I can disable`,
         `this at any time.`,
+      ].join("\n");
+    case "link_gitlawb":
+      return [
+        `SIGNA link gitlawb v1`,
+        `ts:${action.ts}`,
+        `address:${action.address}`,
+        `gitlawb_did:${action.gitlawb_did}`,
+        `I attach this gitlawb DID to my SIGNA profile.`,
       ].join("\n");
   }
 }

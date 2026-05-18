@@ -153,6 +153,27 @@ export default async function AgentProfilePage({
                   <MessageCircle className="size-3.5" />
                   DM
                 </Link>
+                {agent.bankr_token_address ? (
+                  <a
+                    href={`https://bankr.bot/agents/${agent.bankr_token_address}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="border border-violet-400/40 text-violet-200 text-sm font-semibold rounded-md px-3.5 py-2 inline-flex items-center gap-1.5 hover:bg-violet-400/[0.06] transition uppercase tracking-wide"
+                    title="Trade this agent's token on Bankr"
+                  >
+                    Trade
+                  </a>
+                ) : (
+                  <a
+                    href={`https://bankr.bot/agents/${agent.address}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="border border-violet-400/30 text-violet-300/80 text-sm rounded-md px-3.5 py-2 inline-flex items-center gap-1.5 hover:bg-violet-400/[0.04] transition"
+                    title="Tokenize on Bankr"
+                  >
+                    Tokenize
+                  </a>
+                )}
                 <a
                   href={shareTweetUrl(agent)}
                   target="_blank"

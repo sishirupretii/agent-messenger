@@ -2,6 +2,7 @@ import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { EcosystemFeed } from "@/components/feed/EcosystemFeed";
 import { getBotAddress } from "@/lib/signa-bots";
+import { triggerCronIfStale } from "@/lib/cron-trigger";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,8 @@ export const metadata = {
     "Every new repo on gitlawb's decentralized git network shows up here within minutes. Wallet-signed posts from gitlawb.bot.signa.",
 };
 
-export default function GitlawbFeedPage() {
+export default async function GitlawbFeedPage() {
+  await triggerCronIfStale("gitlawb");
   const botAddress = getBotAddress("gitlawb");
   return (
     <div className="min-h-screen flex flex-col">

@@ -46,20 +46,27 @@ async function lookupSignaMetadata(address: string): Promise<{
   basename: string | null;
   ens_name: string | null;
   on_signa: boolean;
+  gitlawb_did: string | null;
 }> {
   try {
     const { data } = await supabase
       .from("users")
-      .select("basename, ens_name")
+      .select("basename, ens_name, gitlawb_did")
       .eq("address", address.toLowerCase())
       .maybeSingle();
     return {
       basename: data?.basename ?? null,
       ens_name: data?.ens_name ?? null,
+      gitlawb_did: data?.gitlawb_did ?? null,
       on_signa: !!data,
     };
   } catch {
-    return { basename: null, ens_name: null, on_signa: false };
+    return {
+      basename: null,
+      ens_name: null,
+      gitlawb_did: null,
+      on_signa: false,
+    };
   }
 }
 

@@ -14,6 +14,7 @@ import { PeerAvatar } from "@/components/ui/Avatar";
 import { HolderBadges } from "@/components/ui/HolderBadges";
 import { shortAddress } from "@/lib/format";
 import { getHolderStatus } from "@/lib/holder-status";
+import { LinkGitlawb } from "./LinkGitlawb";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ type Resolved = {
   address: string;
   basename: string | null;
   ens_name: string | null;
+  gitlawb_did: string | null;
   on_signa: boolean;
   source: string;
 };
@@ -165,6 +167,29 @@ export default async function UserProfilePage({
                     <HolderBadges holdings={holdings} showAmount />
                   </div>
                 )}
+                {resolved.gitlawb_did && (
+                  <div className="mt-4">
+                    <div className="text-[10px] uppercase tracking-wider text-white/35 mb-1.5 flex items-center gap-1.5">
+                      <span className="size-1 rounded-full bg-emerald-400 inline-block" />
+                      gitlawb
+                    </div>
+                    <a
+                      href={`https://gitlawb.com/agents/${encodeURIComponent(resolved.gitlawb_did)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 border border-emerald-300/30 bg-emerald-300/[0.04] text-emerald-200 hover:bg-emerald-300/[0.08] transition px-2 py-1 rounded-sm font-mono text-[11px]"
+                    >
+                      {resolved.gitlawb_did.length > 36
+                        ? `${resolved.gitlawb_did.slice(0, 30)}…${resolved.gitlawb_did.slice(-4)}`
+                        : resolved.gitlawb_did}
+                      <ArrowUpRight className="size-3" />
+                    </a>
+                  </div>
+                )}
+                <LinkGitlawb
+                  profileAddress={resolved.address}
+                  currentDid={resolved.gitlawb_did}
+                />
               </div>
               <div className="flex flex-col gap-2 flex-shrink-0">
                 <Link

@@ -2,6 +2,7 @@ import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { EcosystemFeed } from "@/components/feed/EcosystemFeed";
 import { getBotAddress } from "@/lib/signa-bots";
+import { triggerCronIfStale } from "@/lib/cron-trigger";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +12,10 @@ export const metadata = {
     "Every $BNKR transfer above the whale threshold publishes here within minutes. Wallet-signed posts from bankr.bot.signa.",
 };
 
-export default function BankrFeedPage() {
+export default async function BankrFeedPage() {
+  // Fire-and-forget refresh when page is visited (throttled 5 min).
+  // Doesn't block render. Next visitor sees the fresh whale alerts.
+  await triggerCronIfStale("bankr");
   const botAddress = getBotAddress("bankr");
   return (
     <div className="min-h-screen flex flex-col">
