@@ -120,6 +120,15 @@ export function buildToolsForPeer(peerAddress: `0x${string}` | null): ToolBundle
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "get_current_time",
+        description:
+          "Get the current UTC time (server-side). Useful when the user asks 'what time is it' or about relative dates.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
   ];
 
   const impls: Record<string, ToolImpl> = {
@@ -219,6 +228,14 @@ export function buildToolsForPeer(peerAddress: `0x${string}` | null): ToolBundle
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
       }
+    },
+    get_current_time: async () => {
+      const now = new Date();
+      return JSON.stringify({
+        iso: now.toISOString(),
+        unix: Math.floor(now.getTime() / 1000),
+        utc: now.toUTCString(),
+      });
     },
   };
 

@@ -6,6 +6,7 @@ type Handlers = {
   onNewChat?: () => void;
   onSearch?: () => void;
   onSettings?: () => void;
+  onHelp?: () => void;
   onEscape?: () => void;
 };
 
@@ -41,6 +42,10 @@ export function useKeyboardShortcuts(handlers: Handlers) {
       } else if (mod && e.key === "," && handlers.onSettings) {
         e.preventDefault();
         handlers.onSettings();
+      } else if (e.key === "?" && handlers.onHelp) {
+        // No modifier — '?' is a single key (shift+/ produces it)
+        e.preventDefault();
+        handlers.onHelp();
       }
     }
     window.addEventListener("keydown", onKey);

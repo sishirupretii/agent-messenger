@@ -11,6 +11,7 @@ import { ConversationView } from "@/components/chat/ConversationView";
 import { ConversationEmptyState } from "@/components/chat/EmptyState";
 import { NewChatModal } from "@/components/chat/NewChatModal";
 import { SettingsPanel } from "./SettingsPanel";
+import { HelpModal } from "./HelpModal";
 import { useKeyboardShortcuts, shortcutLabel } from "@/hooks/useKeyboardShortcuts";
 import { listAgents } from "@/lib/agents";
 import { cn } from "@/lib/cn";
@@ -37,6 +38,7 @@ export function AppShell({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalPrefill, setModalPrefill] = useState<string | undefined>();
+  const [helpOpen, setHelpOpen] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -46,8 +48,10 @@ export function AppShell({
       setModalOpen(true);
     },
     onSettings: onOpenSettings,
+    onHelp: () => setHelpOpen((v) => !v),
     onEscape: () => {
-      if (modalOpen) setModalOpen(false);
+      if (helpOpen) setHelpOpen(false);
+      else if (modalOpen) setModalOpen(false);
       else if (settingsOpen) onCloseSettings();
     },
   });
@@ -138,6 +142,7 @@ export function AppShell({
           prefill={modalPrefill}
         />
         <SettingsPanel open={settingsOpen} onClose={onCloseSettings} />
+        <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       </>
     );
   }
