@@ -83,7 +83,7 @@ export function Landing() {
                 className="text-white/70 hover:text-white text-sm font-medium px-3 py-2.5 transition-colors inline-flex items-center gap-1.5"
               >
                 <span className="size-1.5 rounded-full bg-[var(--accent)] inline-block" />
-                Launch an agent →
+                Spawn an agent →
               </Link>
               <Link
                 href="/directory"
@@ -95,58 +95,55 @@ export function Landing() {
           </div>
         </section>
 
-        {/* Launchpad pitch */}
-        <section className="border-b border-white/[0.06]">
-          <div className="max-w-5xl mx-auto px-6 lg:px-10 py-16 sm:py-20">
-            <div className="grid sm:grid-cols-[180px_1fr] gap-4 sm:gap-12">
-              <div className="text-xs uppercase tracking-wider text-[var(--accent)]">
-                Launchpad
+        {/* Launchpad pitch — terminal slab, not v0.dev */}
+        <section className="border-b border-white/[0.06] relative overflow-hidden">
+          <div className="max-w-5xl mx-auto px-6 lg:px-10 py-20 sm:py-28">
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-5">
+              $ signa spawn-agent --help
+            </div>
+            <h2 className="font-display text-4xl sm:text-6xl font-semibold tracking-[-0.04em] leading-[0.98] max-w-3xl">
+              Mint an agent.
+              <br />
+              Sign one tx.
+              <br />
+              <span className="brand-text">Drop a token.</span>
+            </h2>
+            <p className="text-white/65 max-w-lg mt-7 text-[16px] leading-relaxed">
+              Browser mints a fresh Base wallet for the agent. The wallet signs
+              its own launch. Anyone can DM it. Tokenize it through Bankr
+              when you&apos;re ready — same wallet, one click.
+            </p>
+
+            <div className="mt-9 border border-white/10 bg-black/40 font-mono text-[13px] max-w-2xl">
+              <div className="px-4 py-2 border-b border-white/10 flex items-center justify-between">
+                <span className="text-white/40 text-[10px] uppercase tracking-wider">
+                  output
+                </span>
+                <span className="text-white/30 text-[10px]">~/agent.toml</span>
               </div>
-              <div>
-                <h2 className="font-display text-3xl sm:text-4xl font-semibold tracking-[-0.03em] leading-tight max-w-2xl">
-                  Launch an AI agent in 60 seconds.
-                </h2>
-                <p className="text-white/55 max-w-xl mt-4 text-[15px] leading-relaxed">
-                  Every SIGNA-launched agent inherits the full stack on day one
-                  — wallet-native chat (XMTP), trustless identity (ERC-8004),
-                  versioned code (gitlawb), an on-chain token (Bankr), and
-                  pre-launch demand testing (MiroShark). No infrastructure. One
-                  click each.
-                </p>
-                <div className="mt-6 grid sm:grid-cols-5 gap-2 max-w-2xl">
-                  {[
-                    { name: "Chat", who: "SIGNA · XMTP", dot: "bg-[var(--accent)]" },
-                    { name: "Identity", who: "ERC-8004", dot: "bg-amber-300" },
-                    { name: "Code", who: "gitlawb", dot: "bg-emerald-400" },
-                    { name: "Token", who: "Bankr", dot: "bg-violet-400" },
-                    { name: "Intelligence", who: "MiroShark", dot: "bg-cyan-400" },
-                  ].map((s) => (
-                    <div key={s.name} className="card rounded-md p-2.5">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span className={`size-1.5 rounded-full ${s.dot}`} />
-                        <span className="text-[11px] text-white font-medium">
-                          {s.name}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-white/45">{s.who}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-6 flex items-center gap-3">
-                  <Link
-                    href="/launch-agent"
-                    className="bg-white text-black font-medium rounded-md px-4 py-2 text-sm hover:bg-white/90 transition-colors"
-                  >
-                    Launch your agent
-                  </Link>
-                  <Link
-                    href="/launchpad"
-                    className="text-white/70 hover:text-white text-sm px-3 py-2"
-                  >
-                    See what others launched →
-                  </Link>
-                </div>
+              <div className="px-4 py-3 space-y-0.5 leading-[1.7]">
+                <Line k="wallet" v="0xAb…cE39   # base mainnet, fresh, yours" />
+                <Line k="dm    " v="signaagent.xyz/?to=…   # live, signed, encrypted" />
+                <Line k="token " v="$NAME   # one click via bankrbot" />
+                <Line k="code  " v="did:gitlawb:…   # push prompt to decentralized git" />
+                <Line k="id    " v="erc-8004 #…   # portable reputation" />
               </div>
+            </div>
+
+            <div className="mt-9 flex items-center gap-4">
+              <Link
+                href="/launch-agent"
+                className="bg-[var(--accent)] text-black font-semibold rounded-md px-6 py-3 text-[15px] uppercase tracking-wide inline-flex items-center gap-2 hover:brightness-110 transition"
+              >
+                Spawn now
+                <span aria-hidden className="font-mono">→</span>
+              </Link>
+              <Link
+                href="/launchpad"
+                className="text-white/55 hover:text-white text-sm font-mono underline underline-offset-4"
+              >
+                /launchpad
+              </Link>
             </div>
           </div>
         </section>
@@ -245,6 +242,16 @@ export function Landing() {
       </main>
       <Footer />
     </>
+  );
+}
+
+function Line({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="text-white/80">
+      <span className="text-[var(--accent)]">{k.padEnd(7, " ")}</span>
+      <span className="text-white/30"> = </span>
+      <span>{v}</span>
+    </div>
   );
 }
 

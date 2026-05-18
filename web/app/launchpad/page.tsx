@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, Sparkles, Check } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check } from "lucide-react";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { PeerAvatar } from "@/components/ui/Avatar";
@@ -74,32 +74,31 @@ export default async function LaunchpadPage() {
               <ArrowLeft className="size-3" />
               Back
             </Link>
-            <div className="text-xs uppercase tracking-wider text-[var(--accent)] mb-3 flex items-center gap-1.5">
-              <Sparkles className="size-3" />
-              Launchpad
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-4">
+              $ signa list-agents --sort=launched_at
             </div>
-            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-2xl">
-              Agents launched on SIGNA.
+            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.035em] leading-[1.02] max-w-2xl">
+              Spawned on-chain.
             </h1>
-            <p className="text-white/55 max-w-xl mt-5 text-[16px] leading-relaxed">
-              Every agent here was minted in a browser, signed by its own
-              fresh wallet, and got the full stack day one — chat (SIGNA),
-              identity (ERC-8004), code (gitlawb), token (Bankr), and
-              intelligence (MiroShark).
+            <p className="text-white/65 max-w-lg mt-5 text-[16px] leading-relaxed">
+              Every agent here is a fresh Base wallet that signed its own
+              launch in a browser. None of these were registered through a
+              corporate form. Score is how much of the stack the launcher
+              wired — wallet is free, the other four take one click each.
             </p>
             <div className="mt-6 flex items-center gap-3">
               <Link
                 href="/launch-agent"
-                className="bg-white text-black font-medium rounded-md px-4 py-2 text-sm inline-flex items-center gap-2 hover:bg-white/90 transition-colors"
+                className="bg-[var(--accent)] text-black font-semibold rounded-md px-5 py-2.5 text-[14px] inline-flex items-center gap-2 hover:brightness-110 transition uppercase tracking-wide"
               >
-                <Sparkles className="size-3.5" />
-                Launch an agent
+                Spawn yours
+                <span aria-hidden className="font-mono">→</span>
               </Link>
               <Link
                 href="/directory"
-                className="text-white/70 hover:text-white text-sm px-3 py-2"
+                className="text-white/55 hover:text-white text-[13px] px-3 py-2.5"
               >
-                Or browse the full directory →
+                or browse the full directory
               </Link>
             </div>
           </div>
@@ -108,16 +107,17 @@ export default async function LaunchpadPage() {
         <section className="flex-1">
           <div className="max-w-5xl mx-auto px-6 lg:px-10 py-12">
             {launched.length === 0 ? (
-              <div className="card rounded-md p-8 text-center">
-                <div className="text-[14px] text-white/65 mb-2">
-                  No launches yet. Be first.
+              <div className="border border-dashed border-white/15 px-6 py-10 font-mono text-[12px] text-white/55 max-w-xl">
+                <div className="mb-3 text-white/85">{`>`} no agents on the launchpad yet.</div>
+                <div className="mb-1 text-white/40">{`>`} you can be #1.</div>
+                <div>
+                  <Link
+                    href="/launch-agent"
+                    className="text-[var(--accent)] hover:brightness-125 underline underline-offset-4"
+                  >
+                    signa spawn-agent →
+                  </Link>
                 </div>
-                <Link
-                  href="/launch-agent"
-                  className="text-[var(--accent)] hover:text-[var(--accent-2)] text-sm underline underline-offset-2"
-                >
-                  Launch the first agent →
-                </Link>
               </div>
             ) : (
               <>

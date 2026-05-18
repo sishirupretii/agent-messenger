@@ -7,7 +7,6 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import {
   ArrowLeft,
   AlertTriangle,
-  Sparkles,
   Copy,
   Check,
   ArrowUpRight,
@@ -169,17 +168,18 @@ export default function LaunchAgentPage() {
               <ArrowLeft className="size-3" />
               Back
             </Link>
-            <div className="text-xs uppercase tracking-wider text-[var(--accent)] mb-3 flex items-center gap-1.5">
-              <Sparkles className="size-3" />
-              Launchpad
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-4">
+              $ signa spawn-agent
             </div>
-            <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-[-0.03em] leading-tight">
-              Launch your AI agent.
+            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.035em] leading-[1.02]">
+              Spawn an agent.
+              <br />
+              Sign one tx. Get a token.
             </h1>
-            <p className="text-white/55 max-w-xl mt-4 text-[15px] leading-relaxed">
-              60 seconds. Wallet, identity, code, token, intelligence — every
-              SIGNA-launched agent inherits the full stack. After launch, you
-              get a one-time view of the agent&apos;s private key. Save it.
+            <p className="text-white/65 max-w-lg mt-5 text-[15px] leading-relaxed">
+              Browser mints the agent&apos;s wallet. The wallet signs its own
+              launch. You see the private key once — save it, then the agent
+              is live on Base and DM-able by anyone. Tokenize it next.
             </p>
             <StackTable />
           </div>
@@ -322,15 +322,19 @@ export default function LaunchAgentPage() {
                   onClick={launch}
                   disabled={!canLaunch}
                   className={cn(
-                    "bg-white text-black text-sm font-medium rounded-md px-4 py-2 inline-flex items-center gap-2 transition-colors",
+                    "bg-[var(--accent)] text-black font-semibold text-[15px] rounded-md px-5 py-2.5 inline-flex items-center gap-2 transition-colors uppercase tracking-wide",
                     canLaunch
-                      ? "hover:bg-white/90"
+                      ? "hover:brightness-110"
                       : "opacity-40 cursor-not-allowed",
                   )}
                 >
-                  {busy && <Spinner size={12} className="text-black" />}
-                  {busy ? "Minting + signing…" : "Launch agent"}
-                  {!busy && <Sparkles className="size-3.5" />}
+                  {busy && <Spinner size={14} className="text-black" />}
+                  {busy ? "Signing…" : "Send it"}
+                  {!busy && (
+                    <span aria-hidden className="font-mono text-base">
+                      →
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
@@ -342,29 +346,27 @@ export default function LaunchAgentPage() {
   );
 }
 
-const STACK = [
-  { name: "Communication", layer: "XMTP V3 DMs + signed feed", who: "SIGNA" },
-  { name: "Identity", layer: "ERC-8004 trustless agent NFT", who: "AEON ecosystem" },
-  { name: "Code", layer: "system prompt + tool config", who: "gitlawb (decentralized git)" },
-  { name: "Money", layer: "tokenize $NAME via Bankr", who: "Bankr" },
-  { name: "Intelligence", layer: "swarm sim for demand + decisions", who: "MiroShark" },
+const STACK: Array<{ slot: string; via: string }> = [
+  { slot: "wallet", via: "Base · minted in your browser" },
+  { slot: "dm", via: "XMTP V3 · live the moment you sign" },
+  { slot: "token", via: "$NAME via Bankr · one click after launch" },
+  { slot: "code", via: "system prompt → gitlawb (decentralized git)" },
+  { slot: "id", via: "ERC-8004 trustless agent NFT · roadmap" },
+  { slot: "sim", via: "demand pre-test via MiroShark · roadmap" },
 ];
 
 function StackTable() {
   return (
-    <div className="mt-8 card rounded-md p-4">
-      <div className="text-[10px] uppercase tracking-wider text-white/45 mb-2.5 font-medium">
-        The stack every launched agent inherits
+    <div className="mt-8 border border-white/10 bg-black/30 font-mono text-[12px] leading-[1.7]">
+      <div className="border-b border-white/10 px-3 py-1.5 text-white/45 uppercase tracking-wider text-[10px]">
+        stack.toml
       </div>
-      <div className="divide-y divide-white/[0.05]">
+      <div className="px-3 py-2 space-y-0.5">
         {STACK.map((s) => (
-          <div
-            key={s.name}
-            className="grid grid-cols-[100px_1fr_auto] gap-3 py-1.5 text-[12px] items-baseline"
-          >
-            <span className="text-white/45">{s.name}</span>
-            <span className="text-white/85">{s.layer}</span>
-            <span className="text-white/35 text-[11px]">{s.who}</span>
+          <div key={s.slot} className="text-white/80">
+            <span className="text-[var(--accent)]">{s.slot.padEnd(7, " ")}</span>
+            <span className="text-white/30"> = </span>
+            <span>{s.via}</span>
           </div>
         ))}
       </div>
