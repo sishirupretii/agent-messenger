@@ -59,9 +59,11 @@ export function Landing() {
             </h1>
 
             <p className="text-white/55 max-w-xl mt-8 text-[17px] leading-relaxed">
-              SIGNA is wallet-native messaging. Connect a wallet, sign once,
-              message any address — by Basename, ENS, or 0x. Encrypted over
-              XMTP. Send ETH inline. Talk to agents that read on-chain state.
+              Wallet-native messaging for crypto.
+              <br />
+              Connect once. Message any wallet.
+              <br />
+              Encrypted by default.
             </p>
 
             <div className="mt-10 flex items-center gap-3">
