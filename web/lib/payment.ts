@@ -17,9 +17,10 @@ export function parseEthAmount(input: string): bigint | null {
 }
 
 /**
- * After a user has successfully sent an ETH transfer on Base mainnet,
- * publish a TransactionReference XMTP message so the tx appears as a
- * native payment card in the conversation.
+ * After a transfer (ETH or ERC-20) is mined on Base, publish a
+ * TransactionReference XMTP message so the tx appears as a payment card
+ * in the conversation. Currency + decimals carry the token info — the
+ * receiving side renders any token symbol natively.
  */
 export async function shareTransactionReference(
   conv: Conversation,
@@ -27,7 +28,9 @@ export async function shareTransactionReference(
     txHash: Hex;
     fromAddress: Address;
     toAddress: Address;
-    amountWei: bigint;
+    amountRaw: bigint;
+    currency: string;
+    decimals: number;
   },
 ) {
   const convAny = conv as unknown as {
@@ -48,8 +51,7 @@ export async function shareTransactionReference(
     ) => Promise<string>;
   };
 
-  // amount sent as raw wei numeric (with decimals=18 to scale).
-  const amountNumber = Number(args.amountWei);
+  const amountNumber = Number(args.amountRaw);
 
   return convAny.sendTransactionReference({
     namespace: PAYMENT_NAMESPACE,
@@ -57,9 +59,9 @@ export async function shareTransactionReference(
     reference: args.txHash,
     metadata: {
       transactionType: "transfer",
-      currency: "ETH",
+      currency: args.currency,
       amount: Number.isFinite(amountNumber) ? amountNumber : 0,
-      decimals: 18,
+      decimals: args.decimals,
       fromAddress: args.fromAddress.toLowerCase(),
       toAddress: args.toAddress.toLowerCase(),
     },

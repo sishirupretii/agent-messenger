@@ -9,11 +9,14 @@ export function Footer() {
           <Link href="/feed" className="hover:text-white transition-colors">
             Feed
           </Link>
-          <Link href="/about" className="hover:text-white transition-colors">
-            About
-          </Link>
           <Link href="/directory" className="hover:text-white transition-colors">
             Directory
+          </Link>
+          <Link href="/ecosystem" className="hover:text-white transition-colors">
+            Ecosystem
+          </Link>
+          <Link href="/about" className="hover:text-white transition-colors">
+            About
           </Link>
         </div>
       </div>

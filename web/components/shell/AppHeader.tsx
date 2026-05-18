@@ -33,6 +33,9 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           <NavLink href="/directory" active={pathname?.startsWith("/directory") ?? false}>
             Agents
           </NavLink>
+          <NavLink href="/ecosystem" active={pathname?.startsWith("/ecosystem") ?? false}>
+            Ecosystem
+          </NavLink>
         </nav>
       </div>
       <div className="flex items-center gap-1.5">

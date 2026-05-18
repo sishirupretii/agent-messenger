@@ -3,6 +3,8 @@
 import { useState, type KeyboardEvent } from "react";
 import { ArrowUp, X, CornerDownRight } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { parseSlash } from "@/lib/slash-commands";
+import { SlashCommandCard } from "./SlashCommandCard";
 
 export type ReplyTarget = {
   id: string;
@@ -23,6 +25,8 @@ export function MessageInput({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+
+  const slashMatch = parseSlash(text);
 
   async function send() {
     const trimmed = text.trim();
@@ -67,6 +71,7 @@ export function MessageInput({
           </button>
         </div>
       )}
+      <SlashCommandCard match={slashMatch} />
       <div className="card rounded-md px-2.5 py-1.5 flex items-end gap-2 focus-within:border-white/20 transition-colors">
         <textarea
           value={text}

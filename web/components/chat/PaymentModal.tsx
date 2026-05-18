@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import {
@@ -9,16 +9,22 @@ import {
   useWaitForTransactionReceipt,
   useChainId,
   useSwitchChain,
+  useWriteContract,
 } from "wagmi";
 import { base } from "wagmi/chains";
 import { toast } from "sonner";
 import { useChat } from "@/context/ChatProvider";
-import { parseEthAmount, shareTransactionReference } from "@/lib/payment";
+import { shareTransactionReference } from "@/lib/payment";
 import { shortAddress } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Spinner } from "@/components/ui/Spinner";
-
-const QUICK_AMOUNTS = ["0.001", "0.005", "0.01", "0.05"];
+import {
+  ERC20_TRANSFER_ABI,
+  TOKENS,
+  getToken,
+  parseTokenAmount,
+  type TokenInfo,
+} from "@/lib/tokens";
 
 export function PaymentModal({
   open,
@@ -26,41 +32,62 @@ export function PaymentModal({
   toAddress,
   peerLabel,
   initialAmount,
+  initialSymbol,
 }: {
   open: boolean;
   onClose: () => void;
   toAddress: string | null;
   peerLabel?: string;
   initialAmount?: string;
+  initialSymbol?: string;
 }) {
   const { activeConversation } = useChat();
   const { address: from } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
 
+  const [symbol, setSymbol] = useState<string>("ETH");
   const [amount, setAmount] = useState("0.001");
   const [step, setStep] = useState<
     "input" | "switching" | "signing" | "mining" | "shared" | "error"
   >("input");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const { sendTransactionAsync, data: txHash, reset: resetTx } = useSendTransaction();
+  const {
+    sendTransactionAsync,
+    data: ethTxHash,
+    reset: resetEthTx,
+  } = useSendTransaction();
+  const {
+    writeContractAsync,
+    data: erc20TxHash,
+    reset: resetErc20Tx,
+  } = useWriteContract();
+  const txHash = ethTxHash ?? erc20TxHash;
   const { isLoading: isMining, isSuccess: isMined } = useWaitForTransactionReceipt({
     hash: txHash,
     chainId: base.id,
     query: { enabled: !!txHash },
   });
 
+  const token: TokenInfo = useMemo(
+    () => getToken(symbol) ?? TOKENS[0],
+    [symbol],
+  );
+
   useEffect(() => {
     if (open) {
-      setAmount(initialAmount ?? "0.001");
+      const t = (initialSymbol && getToken(initialSymbol)) || TOKENS[0];
+      setSymbol(t.symbol);
+      setAmount(initialAmount ?? t.presets[0]);
       setStep("input");
       setErrorMsg(null);
-      resetTx();
+      resetEthTx();
+      resetErc20Tx();
     }
-  }, [open, initialAmount, resetTx]);
+  }, [open, initialAmount, initialSymbol, resetEthTx, resetErc20Tx]);
 
-  const parsed = parseEthAmount(amount);
+  const parsed = parseTokenAmount(amount, token.decimals);
   const canSend = !!parsed && parsed > 0n && !!from && !!toAddress;
   const wrongChain = chainId !== base.id;
 
@@ -73,11 +100,23 @@ export function PaymentModal({
         await switchChainAsync({ chainId: base.id });
       }
       setStep("signing");
-      await sendTransactionAsync({
-        to: toAddress as `0x${string}`,
-        value: parsed,
-        chainId: base.id,
-      });
+      if (token.address === null) {
+        // Native ETH
+        await sendTransactionAsync({
+          to: toAddress as `0x${string}`,
+          value: parsed,
+          chainId: base.id,
+        });
+      } else {
+        // ERC-20
+        await writeContractAsync({
+          address: token.address,
+          abi: ERC20_TRANSFER_ABI,
+          functionName: "transfer",
+          args: [toAddress as `0x${string}`, parsed],
+          chainId: base.id,
+        });
+      }
       setStep("mining");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -97,17 +136,19 @@ export function PaymentModal({
           txHash,
           fromAddress: from,
           toAddress: toAddress as `0x${string}`,
-          amountWei: parsed,
+          amountRaw: parsed,
+          currency: token.symbol,
+          decimals: token.decimals,
         });
         if (!cancelled) {
           setStep("shared");
-          toast.success("Payment sent");
+          toast.success(`${token.symbol} sent`);
           setTimeout(() => onClose(), 900);
         }
       } catch (e) {
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : String(e);
-        toast.success("Payment sent", {
+        toast.success(`${token.symbol} sent`, {
           description: "Couldn't post the in-chat receipt: " + msg,
         });
         setStep("shared");
@@ -117,7 +158,18 @@ export function PaymentModal({
     return () => {
       cancelled = true;
     };
-  }, [isMined, txHash, activeConversation, from, toAddress, parsed, step, onClose]);
+  }, [
+    isMined,
+    txHash,
+    activeConversation,
+    from,
+    toAddress,
+    parsed,
+    step,
+    onClose,
+    token.symbol,
+    token.decimals,
+  ]);
 
   const sending =
     step === "switching" ||
@@ -148,7 +200,7 @@ export function PaymentModal({
               <div>
                 <h2 className="text-[15px] font-semibold text-white flex items-center gap-1.5">
                   <ArrowUpRight className="size-3.5 text-[var(--accent)]" />
-                  Send ETH
+                  Send {token.symbol}
                 </h2>
                 <p className="text-xs text-white/50 mt-0.5">
                   To {peerLabel ?? (toAddress ? shortAddress(toAddress) : "—")}{" "}
@@ -166,6 +218,31 @@ export function PaymentModal({
             </div>
 
             <label className="text-[10px] uppercase tracking-wider text-white/45 mb-1.5 block">
+              Token
+            </label>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {TOKENS.map((t) => (
+                <button
+                  key={t.symbol}
+                  onClick={() => {
+                    setSymbol(t.symbol);
+                    setAmount(t.presets[0]);
+                  }}
+                  disabled={sending}
+                  className={cn(
+                    "text-[11px] rounded-md px-2 py-1 transition-colors font-medium",
+                    symbol === t.symbol
+                      ? "bg-white/[0.1] text-white border border-white/[0.18]"
+                      : "border border-white/[0.08] text-white/55 hover:text-white hover:bg-white/[0.04]",
+                  )}
+                  title={t.project ? `${t.name} · ${t.project}` : t.name}
+                >
+                  {t.symbol}
+                </button>
+              ))}
+            </div>
+
+            <label className="text-[10px] uppercase tracking-wider text-white/45 mb-1.5 block">
               Amount
             </label>
             <div className="relative">
@@ -176,14 +253,14 @@ export function PaymentModal({
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.0"
                 disabled={sending}
-                className="w-full rounded-md bg-white/[0.04] border border-white/[0.1] px-3 py-2 pr-14 text-[15px] font-mono text-white outline-none focus:border-white/25 transition-colors disabled:opacity-60"
+                className="w-full rounded-md bg-white/[0.04] border border-white/[0.1] px-3 py-2 pr-16 text-[15px] font-mono text-white outline-none focus:border-white/25 transition-colors disabled:opacity-60"
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/40 font-medium">
-                ETH
+                {token.symbol}
               </span>
             </div>
             <div className="flex gap-1 mt-2">
-              {QUICK_AMOUNTS.map((q) => (
+              {token.presets.map((q) => (
                 <button
                   key={q}
                   onClick={() => setAmount(q)}
@@ -201,8 +278,14 @@ export function PaymentModal({
             </div>
 
             <div className="mt-4 text-[11px] text-white/40 leading-relaxed">
-              Real ETH on Base mainnet. You sign in your wallet — the recipient
-              sees a payment card in chat once the tx is mined.
+              Real {token.symbol} on Base mainnet. You sign in your wallet —
+              recipient sees a payment card in chat once the tx is mined.
+              {token.project && (
+                <>
+                  {" "}
+                  <span className="text-[var(--accent)]">{token.project} ecosystem.</span>
+                </>
+              )}
             </div>
 
             {errorMsg && (
