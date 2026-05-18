@@ -2,6 +2,7 @@ import "dotenv/config";
 import { getTestUrl } from "@xmtp/agent-sdk";
 import { createAgent } from "./xmtp.js";
 import { generateReply, type ChatTurn } from "./groq.js";
+import { buildToolsForPeer } from "./tools.js";
 
 const MAX_HISTORY_TURNS = 12;
 
@@ -18,6 +19,7 @@ async function main() {
     );
     console.log(`Personality:    ${process.env.AGENT_NAME ?? "Agent"}`);
     console.log(`Test URL:       ${getTestUrl(ctx.client)}`);
+    console.log("Tools:          on-chain reads on Base Sepolia enabled");
     console.log("Agent online. Listening for messages…");
     console.log("==============================================");
 
@@ -45,9 +47,7 @@ async function main() {
       const incoming = ctx.message.content;
       if (!incoming || !incoming.trim()) return;
 
-      // Pull recent messages from the conversation as Groq context.
-      // This means agent memory persists naturally via XMTP's local DB
-      // (and survives restarts when a Railway volume is mounted).
+      // Pull recent messages from XMTP as Groq context (persistence).
       const recent = await ctx.conversation.messages({
         limit: MAX_HISTORY_TURNS * 2,
       });
@@ -62,7 +62,19 @@ async function main() {
           content: m.content as string,
         }));
 
-      const reply = await generateReply(history);
+      // Bind on-chain tools to this peer's address.
+      let peerAddress: `0x${string}` | null = null;
+      try {
+        const senderAddr = await ctx.getSenderAddress();
+        if (senderAddr && /^0x[a-fA-F0-9]{40}$/.test(senderAddr)) {
+          peerAddress = senderAddr.toLowerCase() as `0x${string}`;
+        }
+      } catch {
+        // ignore — tools will just say address unknown
+      }
+      const toolBundle = buildToolsForPeer(peerAddress);
+
+      const reply = await generateReply(history, toolBundle);
       await ctx.conversation.sendText(reply);
 
       const short = (s: string) => s.replace(/\s+/g, " ").slice(0, 80);
