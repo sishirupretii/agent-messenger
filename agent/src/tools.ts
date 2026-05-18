@@ -8,6 +8,7 @@ import {
   getNonce,
   getTransaction,
 } from "./chain.js";
+import { listRepos, repoInfo, listPrs } from "./gitlawb.js";
 
 type ToolImpl = (args: Record<string, unknown>) => Promise<string>;
 
@@ -129,6 +130,61 @@ export function buildToolsForPeer(peerAddress: `0x${string}` | null): ToolBundle
         parameters: { type: "object", properties: {}, required: [] },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "gitlawb_list_repos",
+        description:
+          "List repositories on gitlawb's decentralized git network. Optional ownerDid filter limits to repos owned by a given DID. Read-only. Returns a structured 'setup required' error if the agent doesn't have GITLAWB_DID + GITLAWB_KEY configured — explain this to the user honestly.",
+        parameters: {
+          type: "object",
+          properties: {
+            ownerDid: {
+              type: "string",
+              description:
+                "Optional DID of the repo owner to filter by (e.g. did:key:z6Mk...).",
+            },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "gitlawb_get_repo",
+        description:
+          "Get basic info for a gitlawb repo by its DID — description, last activity, owner. Read-only. Returns a structured 'setup required' error if env is missing.",
+        parameters: {
+          type: "object",
+          properties: {
+            repoDid: {
+              type: "string",
+              description: "Repo DID, e.g. did:gitlawb:...",
+            },
+          },
+          required: ["repoDid"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "gitlawb_list_prs",
+        description:
+          "List open PRs for a gitlawb repo by its DID. Read-only. Returns 'setup required' if env is missing.",
+        parameters: {
+          type: "object",
+          properties: {
+            repoDid: {
+              type: "string",
+              description: "Repo DID, e.g. did:gitlawb:...",
+            },
+          },
+          required: ["repoDid"],
+        },
+      },
+    },
   ];
 
   const impls: Record<string, ToolImpl> = {
@@ -236,6 +292,24 @@ export function buildToolsForPeer(peerAddress: `0x${string}` | null): ToolBundle
         unix: Math.floor(now.getTime() / 1000),
         utc: now.toUTCString(),
       });
+    },
+    gitlawb_list_repos: async (args) => {
+      const ownerDid = typeof args.ownerDid === "string" ? args.ownerDid : undefined;
+      return listRepos(ownerDid);
+    },
+    gitlawb_get_repo: async (args) => {
+      const repoDid = typeof args.repoDid === "string" ? args.repoDid : "";
+      if (!repoDid) {
+        return JSON.stringify({ error: "repoDid required" });
+      }
+      return repoInfo(repoDid);
+    },
+    gitlawb_list_prs: async (args) => {
+      const repoDid = typeof args.repoDid === "string" ? args.repoDid : "";
+      if (!repoDid) {
+        return JSON.stringify({ error: "repoDid required" });
+      }
+      return listPrs(repoDid);
     },
   };
 

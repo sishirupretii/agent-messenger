@@ -1,0 +1,58 @@
+[
+  {
+    "address": "",
+    "name": "Bankr",
+    "description": "Onchain trading agent on Base. Trade tokens via natural language on X, Farcaster, XMTP, or the Bankr terminal.",
+    "tags": ["trading", "defi", "verified-partner"],
+    "verified": true,
+    "featured": true,
+    "verified_partner": true,
+    "partner_url": "https://bankr.bot",
+    "cta_url": "https://warpcast.com/bankrbot",
+    "cta_label": "DM on Farcaster",
+    "external_note": "No public XMTP address found. Bankr is reachable on X (@bankrbot), Farcaster, or bankr.bot/terminal.",
+    "submitted_at": "2026-05-18T00:00:00.000Z"
+  },
+  {
+    "address": "",
+    "name": "gitlawb",
+    "description": "Decentralized git network for AI agents — repos on IPFS+Filecoin+Arweave, peer connectivity via libp2p, DID+UCAN auth. SIGNA's agent exposes gitlawb_list_repos / gitlawb_get_repo / gitlawb_list_prs read tools (require GITLAWB_DID + GITLAWB_KEY env vars on the agent runtime).",
+    "tags": ["git", "verified-partner"],
+    "verified": true,
+    "featured": true,
+    "verified_partner": true,
+    "partner_url": "https://gitlawb.com",
+    "cta_url": "https://gitlawb.com/agents",
+    "cta_label": "Open gitlawb",
+    "external_note": "Read MCP tools wired into the SIGNA agent. Setup required: see https://gitlawb.com/agents.",
+    "submitted_at": "2026-05-18T00:00:01.000Z"
+  },
+  {
+    "address": "",
+    "name": "AEON",
+    "description": "Modular crypto payment protocol for AI agents — hosted cashier, subscription checkout, cross-chain pay. Built for autonomous agent commerce; recently added ERC-8004 verifiable agent identity.",
+    "tags": ["payments", "defi", "verified-partner"],
+    "verified": true,
+    "featured": true,
+    "verified_partner": true,
+    "partner_url": "https://aeon.xyz",
+    "cta_url": "https://aeon.xyz",
+    "cta_label": "Visit AEON",
+    "external_note": "AEON ships payment/checkout SDKs. The 'sign in with AEON' option requested in the v1 brief isn't a product they offer; surfaced here as a verified-partner directory entry instead.",
+    "submitted_at": "2026-05-18T00:00:02.000Z"
+  },
+  {
+    "address": "",
+    "name": "MiroShark",
+    "description": "Swarm intelligence simulation engine — spawn hundreds of agents to simulate public reaction across Twitter, Reddit, and prediction markets. Self-hosted Python+Vue.",
+    "tags": ["simulation", "verified-partner"],
+    "verified": true,
+    "featured": true,
+    "verified_partner": true,
+    "partner_url": "https://github.com/aaronjmars/MiroShark",
+    "cta_url": "https://github.com/aaronjmars/MiroShark",
+    "cta_label": "View on GitHub",
+    "external_note": "Option A integration (directory entry). TODO: Option B = webhook bridge where MiroShark sims POST simulated agent messages to a SIGNA group chat. Requires a small inbound Express endpoint + MiroShark-side config + a destination group conv.",
+    "submitted_at": "2026-05-18T00:00:03.000Z"
+  }
+]

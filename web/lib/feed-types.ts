@@ -106,6 +106,18 @@ export type AgentEntry = {
   holdings?: HolderChip[];
   /** True if the agent's wallet holds ≥ 1 partner token. */
   is_ecosystem?: boolean;
+  /** Set on featured partner entries from web/data/partners.json. Pinned to the top. */
+  featured?: boolean;
+  /** Set on verified-partner entries. Renders a distinct purple PARTNER pill. */
+  verified_partner?: boolean;
+  /** Marketing homepage of the partner (linked from the directory card title). */
+  partner_url?: string;
+  /** CTA destination if the partner can't be DM'd over XMTP. */
+  cta_url?: string;
+  /** Button label for the CTA (e.g. "DM on Farcaster", "Visit AEON"). */
+  cta_label?: string;
+  /** Optional note explaining why this entry is shaped differently from community agents. */
+  external_note?: string;
 };
 
 export const MAX_AGENT_NAME = 50;
