@@ -8,6 +8,7 @@ import { useChat } from "@/context/ChatProvider";
 import { ConversationItem } from "./ConversationItem";
 import { ConversationSkeleton } from "./ConversationSkeleton";
 import { SidebarEmpty } from "./EmptyState";
+import { ProfileChip } from "@/components/shell/ProfileChip";
 import { Spinner } from "@/components/ui/Spinner";
 import { isGroup, getGroupName } from "@/lib/conversation";
 import { getMessageText } from "@/lib/message";
@@ -74,7 +75,8 @@ export function Sidebar({
         className,
       )}
     >
-      <div className="flex items-center justify-between px-3 pt-3 pb-2">
+      <ProfileChip />
+      <div className="flex items-center justify-between px-3 pt-2 pb-2">
         <h2 className="text-xs font-medium uppercase tracking-wider text-white/40 px-1">
           Chats
         </h2>
