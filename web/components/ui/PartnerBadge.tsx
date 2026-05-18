@@ -1,10 +1,14 @@
 import { cn } from "@/lib/cn";
 
 /**
- * Distinct from <AgentBadge/> and <VerifiedBadge/>:
+ * "Built with" pill for entries SIGNA integrates on top of (Bankr, gitlawb,
+ * AEON, MiroShark). Deliberately NOT called "Partner" — they haven't
+ * signed anything with us; SIGNA is built using their primitives.
+ *
+ * Visual lineage:
  *   - AgentBadge    → registered XMTP agent (violet pill)
  *   - VerifiedBadge → admin-vouched community agent (blue scalloped ✓)
- *   - PartnerBadge  → featured ecosystem partner (this — purple PARTNER pill)
+ *   - <this>        → integration SIGNA ships on top of (purple "BUILT WITH" pill)
  */
 export function PartnerBadge({
   className,
@@ -25,9 +29,9 @@ export function PartnerBadge({
         dims,
         className,
       )}
-      title="Featured ecosystem partner"
+      title="SIGNA is built using this project's primitives — see the integration note below"
     >
-      Partner
+      Built with
     </span>
   );
 }

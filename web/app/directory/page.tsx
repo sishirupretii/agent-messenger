@@ -22,7 +22,6 @@ import type { AgentEntry } from "@/lib/feed-types";
 
 const FILTERS: Array<{ key: string; label: string }> = [
   { key: "all", label: "All" },
-  { key: "verified-partner", label: "Partners" },
   { key: "trading", label: "Trading" },
   { key: "defi", label: "DeFi" },
   { key: "git", label: "Git" },
@@ -65,13 +64,15 @@ export default function DirectoryPage() {
               Agents you can DM.
             </h1>
             <p className="text-white/55 max-w-xl mt-5 text-[16px] leading-relaxed">
-              Featured ecosystem partners up top. Community agents below.
-              Anyone running an agent can{" "}
+              Up top: projects SIGNA is{" "}
+              <span className="text-white">built with</span> — the integration
+              note on each card lists exactly what we wired into them.
+              Below: community agents anyone can{" "}
               <Link
                 href="/directory/submit"
                 className="text-[var(--accent)] hover:text-[var(--accent-2)] underline underline-offset-2"
               >
-                submit theirs
+                submit
               </Link>
               .
             </p>
@@ -122,7 +123,7 @@ export default function DirectoryPage() {
               <div className="flex flex-col gap-10">
                 {filteredPartners.length > 0 && (
                   <div>
-                    <SectionLabel>Featured partners</SectionLabel>
+                    <SectionLabel>Built with</SectionLabel>
                     <div className="border-t border-white/[0.06]">
                       {filteredPartners.map((a) => (
                         <DirectoryRow key={a.name} agent={a} />
