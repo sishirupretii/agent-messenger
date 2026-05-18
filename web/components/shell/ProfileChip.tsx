@@ -62,7 +62,7 @@ export function ProfileChip() {
             )}
           </span>
           <span
-            className="text-[9px] uppercase tracking-[0.08em] font-medium text-[var(--accent)] border border-[var(--accent)]/25 bg-[var(--accent-dim)] rounded-sm px-1 py-px flex-shrink-0"
+            className="text-[9px] uppercase tracking-[0.08em] font-medium text-[var(--accent)] border border-[var(--accent)]/30 bg-[var(--accent-dim)] rounded-sm px-1 py-px flex-shrink-0"
             title={`XMTP "${XMTP_ENV}" network`}
           >
             {XMTP_ENV}

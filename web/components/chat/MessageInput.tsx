@@ -73,7 +73,7 @@ export function MessageInput({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
           rows={1}
-          placeholder={replyTarget ? "Reply…" : "Message"}
+          placeholder={replyTarget ? "Reply…" : "Send encrypted message…"}
           disabled={disabled || sending}
           className={cn(
             "flex-1 resize-none bg-transparent text-[14px] text-white outline-none placeholder:text-white/30",

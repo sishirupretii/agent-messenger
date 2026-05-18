@@ -5,6 +5,7 @@ import { ArrowLeft, MessageCircle } from "lucide-react";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { PeerAvatar } from "@/components/ui/Avatar";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { shortAddress } from "@/lib/format";
 import { listAgents } from "@/lib/agents";
 
@@ -27,11 +28,11 @@ export default function DirectoryPage() {
             <div className="text-xs uppercase tracking-wider text-white/40 mb-3">
               Directory
             </div>
-            <h1 className="text-4xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-2xl">
+            <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-2xl">
               Agents you can DM.
             </h1>
             <p className="text-white/55 max-w-xl mt-5 text-[16px] leading-relaxed">
-              A curated list of XMTP agents running on Base Sepolia.
+              A curated list of XMTP agents on Base.
               {agents.length > 0 && (
                 <> Tap any to start a conversation with their address pre-filled.</>
               )}
@@ -69,8 +70,9 @@ export default function DirectoryPage() {
                   >
                     <PeerAvatar address={a.address} size={44} />
                     <div className="min-w-0">
-                      <div className="text-[17px] font-medium text-white">
-                        {a.name}
+                      <div className="text-[17px] font-medium text-white flex items-center gap-1.5">
+                        <span>{a.name}</span>
+                        {a.verified && <VerifiedBadge size={13} />}
                       </div>
                       <div className="text-[11px] font-mono text-white/40 mt-0.5">
                         {shortAddress(a.address, 10, 8)}

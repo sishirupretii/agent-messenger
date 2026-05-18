@@ -18,9 +18,12 @@ import { Fragment } from "react";
 import { cn } from "@/lib/cn";
 import { shortAddress } from "@/lib/format";
 import { isGroup, getGroupName } from "@/lib/conversation";
-import { isKnownAgentAddress, getKnownAgent } from "@/lib/agents";
+import { isKnownAgentAddress, getKnownAgent, isVerifiedAgent } from "@/lib/agents";
 import { AgentBadge } from "@/components/ui/AgentBadge";
+import { VerifiedBadge } from "@/components/ui/VerifiedBadge";
 import { GroupInfoPanel } from "./GroupInfoPanel";
+import { SecurityChips } from "./SecurityChips";
+import { GhostMessages } from "./GhostMessages";
 
 export function ConversationView({ onBack }: { onBack: () => void }) {
   const {
@@ -85,6 +88,7 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
     : undefined;
   const isAgent = !isGroupConv && isKnownAgentAddress(peerAddress);
   const knownAgent = isAgent ? getKnownAgent(peerAddress) : null;
+  const verified = !isGroupConv && isVerifiedAgent(peerAddress);
 
   // load group member count + inbox→address map
   useEffect(() => {
@@ -163,7 +167,7 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <header className="flex items-center gap-2.5 px-4 h-[57px] border-b border-white/[0.06] flex-shrink-0">
+      <header className="flex items-start gap-2.5 px-4 py-2.5 border-b border-white/[0.06] flex-shrink-0">
         <button
           onClick={onBack}
           className="lg:hidden text-white/60 hover:text-white p-1 -ml-1"
@@ -201,7 +205,8 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
                 shortAddress(activeConversation.id, 4, 4)
               )}
             </span>
-            {isAgent && <AgentBadge size="xs" />}
+            {verified && <VerifiedBadge size={11} />}
+            {isAgent && !verified && <AgentBadge size="xs" />}
           </div>
           {isGroupConv ? (
             <div className="text-[11px] text-white/40 hover:text-white/60 transition-colors">
@@ -210,21 +215,24 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
                 : "loading members…"}
             </div>
           ) : (
-            <div className="flex items-center gap-1 text-[11px] text-white/40 font-mono">
-              <span className="truncate">{peerAddress ?? "unknown"}</span>
-              {peerAddress && (
-                <button
-                  onClick={copyAddress}
-                  className="hover:text-white/80 transition-colors p-0.5"
-                  aria-label="Copy address"
-                >
-                  {copied ? (
-                    <Check className="size-3" />
-                  ) : (
-                    <Copy className="size-3" />
-                  )}
-                </button>
-              )}
+            <div className="mt-0.5 space-y-0.5">
+              <div className="flex items-center gap-1 text-[11px] text-white/40 font-mono">
+                <span className="truncate">{peerAddress ?? "unknown"}</span>
+                {peerAddress && (
+                  <button
+                    onClick={copyAddress}
+                    className="hover:text-white/80 transition-colors p-0.5"
+                    aria-label="Copy address"
+                  >
+                    {copied ? (
+                      <Check className="size-3" />
+                    ) : (
+                      <Copy className="size-3" />
+                    )}
+                  </button>
+                )}
+              </div>
+              <SecurityChips verified={verified} />
             </div>
           )}
         </div>
@@ -234,31 +242,7 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2 pr-14"
       >
-        {messages.length === 0 && (
-          <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-12 gap-3">
-            {isGroupConv ? (
-              <div className="size-12 rounded-2xl bg-white/[0.05] border border-white/[0.08] flex items-center justify-center">
-                <Users className="size-5 text-white/70" />
-              </div>
-            ) : (
-              <PeerAvatar address={peerAddress} size={48} />
-            )}
-            <div className="space-y-1">
-              <div className="text-white font-medium text-sm">
-                {isGroupConv
-                  ? `This is the start of ${groupName ?? "your group"}`
-                  : knownAgent
-                    ? `Say hi to ${knownAgent.name}`
-                    : "Start the conversation"}
-              </div>
-              <div className="text-white/40 text-xs max-w-xs">
-                {isAgent
-                  ? `Try asking: "what's my balance?" or "what's the gas price?"`
-                  : "Messages are end-to-end encrypted via XMTP."}
-              </div>
-            </div>
-          </div>
-        )}
+        {messages.length === 0 && <GhostMessages />}
         {messages.map((m, i) => {
           const isMine = m.senderInboxId === client?.inboxId;
           const next = messages[i + 1];

@@ -2,26 +2,31 @@
 
 :root {
   color-scheme: dark;
-  --background: #000000;
-  --foreground: #fafafa;
+  --background: #0a0a0f;
+  --foreground: #f5f5f7;
   --muted: rgba(255, 255, 255, 0.62);
   --subtle: rgba(255, 255, 255, 0.42);
   --faint: rgba(255, 255, 255, 0.28);
-  --hairline: rgba(255, 255, 255, 0.07);
-  --hairline-strong: rgba(255, 255, 255, 0.12);
-  --surface: #0a0a0c;
-  --surface-raised: #111114;
-  --surface-hover: #16161a;
-  /* single restrained accent — lime, used very sparingly */
-  --accent: #a3e635;
-  --accent-dim: rgba(163, 230, 53, 0.14);
-  --accent-text: #d9f99d;
+  --hairline: rgba(255, 255, 255, 0.06);
+  --hairline-strong: rgba(255, 255, 255, 0.1);
+  --surface: #0e0e15;
+  --surface-raised: #14141d;
+  --surface-hover: #1a1a25;
+  /* SIGNA accent system — neon blue primary, violet secondary */
+  --accent: #5b8def;            /* electric blue, primary action + active states */
+  --accent-strong: #4a7adb;     /* hover */
+  --accent-dim: rgba(91, 141, 239, 0.14);
+  --accent-text: #a5c3ff;       /* muted blue for text */
+  --accent-2: #8b5cf6;          /* violet, secondary highlights */
+  --accent-2-dim: rgba(139, 92, 246, 0.15);
   --warning: #fbbf24;
   --error: #f87171;
+  --online: #22c55e;
 }
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-space-grotesk);
   --font-mono: var(--font-geist-mono);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -31,14 +36,23 @@ html,
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-feature-settings: "ss01", "cv11";
 }
 
 body {
   min-height: 100vh;
+  /* very subtle depth — not gradient-as-decoration, just barely-there atmosphere */
+  background-image:
+    radial-gradient(ellipse 60% 40% at 80% -10%, rgba(91, 141, 239, 0.05), transparent 60%),
+    radial-gradient(ellipse 50% 35% at 0% 100%, rgba(139, 92, 246, 0.04), transparent 60%);
+  background-attachment: fixed;
+}
+
+h1, h2, h3, h4, h5, h6,
+.font-display {
+  font-family: var(--font-space-grotesk), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 }
 
 ::-webkit-scrollbar {
@@ -68,14 +82,11 @@ textarea::placeholder {
 }
 
 ::selection {
-  background: rgba(163, 230, 53, 0.28);
+  background: rgba(91, 141, 239, 0.32);
   color: white;
 }
 
-/* ---------- surfaces ---------- */
-/* Solid raised surfaces replace the previous backdrop-blur glass.
-   The .glass / .glass-strong aliases remain so legacy components keep
-   working but render as solid hairline cards. */
+/* surfaces */
 .glass,
 .card {
   background-color: var(--surface);
@@ -88,8 +99,7 @@ textarea::placeholder {
   border: 1px solid var(--hairline-strong);
 }
 
-/* ---------- accents (was brand-gradient) ---------- */
-/* Primary buttons: confident white-on-black. */
+/* primary action */
 .brand-gradient {
   background-color: var(--foreground);
   color: #000;
@@ -99,13 +109,26 @@ textarea::placeholder {
   background-color: #ffffff;
 }
 
-/* Highlighted heading word — single specific lime tone, not a rainbow */
+/* accent text — primary brand color (replaces the old lime "wallets" highlight) */
 .brand-text {
-  color: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
   font-weight: 600;
 }
 
-/* ---------- typing dots ---------- */
+/* subtle glow utility — restrained, used on focus rings and primary actions */
+.glow-accent {
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.4), 0 0 24px -8px rgba(91, 141, 239, 0.35);
+}
+
+.focus-glow:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent), 0 0 16px -4px rgba(91, 141, 239, 0.4);
+}
+
+/* typing dots */
 @keyframes typing-dot {
   0%, 60%, 100% { opacity: 0.2; transform: translateY(0); }
   30% { opacity: 1; transform: translateY(-2px); }
@@ -116,12 +139,11 @@ textarea::placeholder {
 .typing-dot:nth-child(2) { animation-delay: 0.15s; }
 .typing-dot:nth-child(3) { animation-delay: 0.3s; }
 
-/* ---------- subtle text utilities ---------- */
+/* text utilities */
 .text-muted { color: var(--muted); }
 .text-subtle { color: var(--subtle); }
 .text-faint { color: var(--faint); }
 
-/* Hairline divider for inline use */
 .hairline {
   border-color: var(--hairline);
 }

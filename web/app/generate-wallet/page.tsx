@@ -73,7 +73,7 @@ export default function GenerateWalletPage() {
             <div className="text-xs uppercase tracking-wider text-white/40 mb-3">
               Setup utility
             </div>
-            <h1 className="text-3xl sm:text-4xl font-semibold tracking-[-0.03em] leading-tight">
+            <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-[-0.03em] leading-tight">
               Generate an agent wallet
             </h1>
             <p className="text-white/55 max-w-xl mt-4 text-[15px] leading-relaxed">

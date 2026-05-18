@@ -2,14 +2,14 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Agent Messenger",
-    short_name: "Agent Msg",
+    name: "SIGNA",
+    short_name: "SIGNA",
     description:
-      "Open-source agent messaging on Base Sepolia. Wallet-to-wallet and wallet-to-agent chat over XMTP.",
+      "Wallet-native messaging on Base. Encrypted chats, payments, and agents.",
     start_url: "/",
     display: "standalone",
-    background_color: "#000000",
-    theme_color: "#000000",
+    background_color: "#0a0a0f",
+    theme_color: "#5b8def",
     icons: [
       {
         src: "/icon",

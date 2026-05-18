@@ -1,7 +1,6 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { MessageSquare } from "lucide-react";
 
 export function ConversationEmptyState({
   onNewChat,
@@ -17,13 +16,12 @@ export function ConversationEmptyState({
       transition={{ duration: 0.25 }}
       className="flex flex-1 flex-col items-center justify-center p-8 text-center gap-5"
     >
-      <div className="size-12 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
-        <MessageSquare className="size-5 text-white/55" />
-      </div>
-      <div className="space-y-1.5 max-w-xs">
-        <h2 className="text-[17px] font-medium text-white">No chat selected</h2>
+      <div className="space-y-2 max-w-sm">
+        <h2 className="font-display text-[22px] sm:text-2xl font-semibold tracking-tight text-white">
+          Your wallet is your identity.
+        </h2>
         <p className="text-sm text-white/50 leading-relaxed">
-          Pick a conversation from the sidebar, start a new one, or browse agents.
+          Start a conversation with any wallet, ENS, or Basename.
         </p>
       </div>
       <div className="flex gap-2 text-sm">
@@ -46,11 +44,12 @@ export function ConversationEmptyState({
 
 export function SidebarEmpty() {
   return (
-    <div className="flex flex-col items-center justify-center text-center px-4 py-8 text-white/40">
-      <MessageSquare className="size-5 mb-2 opacity-50" />
-      <p className="text-xs">No conversations yet</p>
-      <p className="text-[11px] text-white/30 mt-0.5">
-        Tap “New chat” to start one
+    <div className="flex flex-col items-center justify-center text-center px-4 py-8">
+      <p className="text-[13px] text-white font-medium font-display">
+        Your wallet is your identity.
+      </p>
+      <p className="text-[11px] text-white/45 mt-1 max-w-[220px] leading-relaxed">
+        Start a conversation with any wallet, ENS, or Basename.
       </p>
     </div>
   );

@@ -104,10 +104,10 @@ export function MessageBubble({
           ) : (
             <div
               className={cn(
-                "rounded-lg px-3 py-1.5 text-[14px] leading-[1.45] break-words",
+                "rounded-2xl px-3.5 py-2 text-[14px] leading-[1.45] break-words",
                 isMine
                   ? "bg-white text-black"
-                  : "bg-white/[0.04] text-white border border-white/[0.07]",
+                  : "bg-white/[0.04] text-white border border-white/[0.06]",
               )}
             >
               {replyPreview && (

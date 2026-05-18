@@ -15,7 +15,7 @@ export function AgentBadge({
   return (
     <span
       className={cn(
-        "rounded-sm font-medium uppercase tracking-[0.08em] inline-flex items-center bg-[var(--accent-dim)] text-[var(--accent)] border border-[var(--accent)]/25",
+        "rounded-sm font-medium uppercase tracking-[0.08em] inline-flex items-center bg-[var(--accent-2-dim)] text-[var(--accent-2)] border border-[var(--accent-2)]/25",
         dims,
         className,
       )}

@@ -1,5 +1,5 @@
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { baseSepolia, mainnet } from "wagmi/chains";
+import { base, baseSepolia, mainnet } from "wagmi/chains";
 import { http } from "wagmi";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
@@ -11,12 +11,14 @@ if (!projectId) {
 }
 
 export const wagmiConfig = getDefaultConfig({
-  appName: "Agent Messenger",
+  appName: "SIGNA",
   projectId,
-  // baseSepolia for the app, mainnet for ENS resolution only (not a default switch target).
-  chains: [baseSepolia, mainnet],
+  // baseSepolia primary (where the app runs).
+  // mainnet for ENS resolution; base mainnet for Basenames resolution (ENSIP-19).
+  chains: [baseSepolia, base, mainnet],
   transports: {
     [baseSepolia.id]: http(),
+    [base.id]: http(),
     [mainnet.id]: http(),
   },
   ssr: true,

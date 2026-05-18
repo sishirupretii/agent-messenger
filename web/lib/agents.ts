@@ -5,6 +5,8 @@ export type AgentEntry = {
   address: string;
   description: string;
   tags?: string[];
+  /** Optional: true if SIGNA has vouched/checked this agent. Renders a ✓. */
+  verified?: boolean;
 };
 
 const agents = agentsData as AgentEntry[];
@@ -22,6 +24,11 @@ export function getKnownAgent(
 ): AgentEntry | null {
   if (!address) return null;
   return byAddr.get(address.toLowerCase()) ?? null;
+}
+
+export function isVerifiedAgent(address: string | null | undefined): boolean {
+  if (!address) return false;
+  return byAddr.get(address.toLowerCase())?.verified === true;
 }
 
 export function listAgents(): AgentEntry[] {

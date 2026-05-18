@@ -1,50 +1,63 @@
 import type { Metadata, Viewport } from "next";
-import { GeistSans } from "geist/font/sans";
+import { Inter, Space_Grotesk } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { Toaster } from "sonner";
 import "./globals.css";
 import "@rainbow-me/rainbowkit/styles.css";
 import { Providers } from "./providers";
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
+  display: "swap",
+});
+
 const siteUrl = "https://agent-messenger.vercel.app";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Agent Messenger",
-    template: "%s · Agent Messenger",
+    default: "SIGNA",
+    template: "%s · SIGNA",
   },
   description:
-    "Open-source wallet-native messaging on Base Sepolia. Wallet-to-wallet DMs and group chats, plus autonomous agents you can DM — all over XMTP.",
-  applicationName: "Agent Messenger",
-  authors: [{ name: "Agent Messenger" }],
+    "Wallet-native messaging on Base. Encrypted chats, payments, and agents — all from one wallet identity.",
+  applicationName: "SIGNA",
+  authors: [{ name: "SIGNA" }],
   keywords: [
+    "SIGNA",
     "XMTP",
-    "Base Sepolia",
+    "Base",
+    "Basenames",
     "wallet messaging",
     "AI agent",
     "Groq",
-    "Llama",
-    "web3",
+    "web3 chat",
   ],
   openGraph: {
-    title: "Agent Messenger",
+    title: "SIGNA",
     description:
-      "Talk to wallets. Talk to agents. Open-source agent messaging on Base Sepolia.",
+      "Wallet-native messaging. Encrypted chats, payments, and agents on Base.",
     url: siteUrl,
-    siteName: "Agent Messenger",
+    siteName: "SIGNA",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Agent Messenger",
+    title: "SIGNA",
     description:
-      "Talk to wallets. Talk to agents. Open-source agent messaging on Base Sepolia.",
+      "Wallet-native messaging. Encrypted chats, payments, and agents on Base.",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#000000",
+  themeColor: "#0a0a0f",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -58,7 +71,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      className={`${inter.variable} ${spaceGrotesk.variable} ${GeistMono.variable}`}
     >
       <body>
         <Providers>{children}</Providers>
@@ -68,7 +81,7 @@ export default function RootLayout({
           closeButton
           toastOptions={{
             style: {
-              background: "#0a0a0c",
+              background: "#14141d",
               border: "1px solid rgba(255,255,255,0.1)",
               color: "white",
               fontSize: 13,
