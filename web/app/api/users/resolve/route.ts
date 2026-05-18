@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, http } from "viem";
-import { mainnet, base } from "viem/chains";
+import { mainnet } from "viem/chains";
 import { normalize } from "viem/ens";
 import { supabase } from "@/lib/supabase";
 
@@ -27,17 +27,16 @@ export const dynamic = "force-dynamic";
  * `on_signa` is true iff the address has a row in the users table.
  */
 
+// Default to Cloudflare's free public Ethereum mainnet RPC. Reliably
+// reachable from Vercel serverless egress. Override with ETHEREUM_RPC_URL
+// for higher rate limits. The mainnet universal resolver handles both
+// `.eth` and `.base.eth` — Basenames expose L1 forward records, so we
+// don't need a separate Base client here.
+const MAINNET_RPC = process.env.ETHEREUM_RPC_URL || "https://cloudflare-eth.com";
+
 const mainnetClient = createPublicClient({
   chain: mainnet,
-  transport: http(process.env.ETHEREUM_RPC_URL),
-});
-
-// Basenames live on Base but the L2Resolver is queried via mainnet.
-// For now we just resolve .base.eth through mainnet too — Basenames
-// expose forward records there.
-const baseClient = createPublicClient({
-  chain: base,
-  transport: http(process.env.BASE_RPC_URL),
+  transport: http(MAINNET_RPC),
 });
 
 function isHexAddress(s: string): boolean {
@@ -107,14 +106,23 @@ export async function GET(req: NextRequest) {
       address = viaDb.address;
     }
 
-    // Fallback to live ENS resolve.
+    // Fallback to live ENS resolve. We always use the mainnet universal
+    // resolver — viem's getEnsAddress on mainnet handles both `.eth` and
+    // `.base.eth` correctly because Basenames expose L1 forward records
+    // via Basename's UR contract on mainnet. (Calling getEnsAddress on
+    // baseClient does NOT work for Basenames — the L1 universal resolver
+    // is the source of truth.)
     if (!address) {
       try {
-        const client = handle.endsWith(".base.eth") ? baseClient : mainnetClient;
-        const resolved = await client.getEnsAddress({ name: normalized });
+        const resolved = await mainnetClient.getEnsAddress({
+          name: normalized,
+        });
         if (resolved) address = resolved.toLowerCase();
-      } catch {
-        // resolver miss — fall through
+      } catch (e) {
+        console.error(
+          `[resolve] ENS lookup failed for ${normalized}:`,
+          e instanceof Error ? e.message : e,
+        );
       }
     }
 
