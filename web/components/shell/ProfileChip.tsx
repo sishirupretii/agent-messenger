@@ -30,38 +30,36 @@ export function ProfileChip() {
   if (!ownAddress) return null;
 
   return (
-    <div className="px-3 pb-3 pt-1">
-      <div className="glass rounded-xl p-2.5 flex items-center gap-2.5">
-        <PeerAvatar address={ownAddress} size={28} />
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-white truncate flex items-center gap-1.5">
-            <span className="truncate">
-              {displayName ? (
-                displayName
-              ) : (
-                <PeerName address={ownAddress} fallback={shortAddress(ownAddress)} />
-              )}
-            </span>
-            <span
-              className="text-[8px] uppercase tracking-wider font-semibold bg-amber-400/15 text-amber-200 border border-amber-300/20 rounded-full px-1.5 py-0.5 flex-shrink-0"
-              title={`Connected to the XMTP "${XMTP_ENV}" network`}
-            >
-              {XMTP_ENV}
-            </span>
-          </div>
-          <div className="text-[10px] font-mono text-white/40 truncate">
-            {shortAddress(ownAddress, 6, 4)}
-          </div>
+    <div className="px-3 py-3 flex items-center gap-2.5 border-b border-white/[0.06]">
+      <PeerAvatar address={ownAddress} size={26} />
+      <div className="flex-1 min-w-0">
+        <div className="text-[12.5px] font-medium text-white truncate flex items-center gap-1.5">
+          <span className="truncate">
+            {displayName ? (
+              displayName
+            ) : (
+              <PeerName address={ownAddress} fallback={shortAddress(ownAddress)} />
+            )}
+          </span>
+          <span
+            className="text-[9px] uppercase tracking-[0.08em] font-medium text-[var(--accent)] border border-[var(--accent)]/25 bg-[var(--accent-dim)] rounded-sm px-1 py-px flex-shrink-0"
+            title={`XMTP "${XMTP_ENV}" network`}
+          >
+            {XMTP_ENV}
+          </span>
         </div>
-        <button
-          onClick={copy}
-          className="text-white/50 hover:text-white p-1 rounded-md hover:bg-white/[0.06] transition-colors"
-          aria-label="Copy address"
-          title="Copy your address"
-        >
-          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-        </button>
+        <div className="text-[10px] font-mono text-white/40 truncate">
+          {shortAddress(ownAddress, 6, 4)}
+        </div>
       </div>
+      <button
+        onClick={copy}
+        className="text-white/45 hover:text-white p-1 rounded-md hover:bg-white/[0.05] transition-colors"
+        aria-label="Copy address"
+        title="Copy address"
+      >
+        {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+      </button>
     </div>
   );
 }

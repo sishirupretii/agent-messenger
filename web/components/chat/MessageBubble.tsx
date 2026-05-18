@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
 import { SmilePlus, Reply, CornerUpLeft, Copy } from "lucide-react";
 import { toast } from "sonner";
 import type { DecodedMessage } from "@xmtp/browser-sdk";
@@ -66,20 +65,17 @@ export function MessageBubble({
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
+    <div
       className={cn("group flex w-full", isMine ? "justify-end" : "justify-start")}
     >
       <div
         className={cn(
-          "flex max-w-[80%] flex-col gap-1 relative",
+          "flex max-w-[78%] flex-col gap-0.5 relative",
           isMine && "items-end",
         )}
       >
         {senderLabel && !isMine && (
-          <span className="text-[10px] text-white/40 pl-2 font-medium">
+          <span className="text-[10px] text-white/45 pl-2.5 font-medium mb-0.5">
             {senderAddress ? (
               <PeerName address={senderAddress} fallback={senderLabel} />
             ) : (
@@ -90,19 +86,19 @@ export function MessageBubble({
         <div className="relative">
           <div
             className={cn(
-              "rounded-2xl px-3.5 py-2 text-sm leading-snug break-words shadow-sm",
+              "rounded-lg px-3 py-1.5 text-[14px] leading-[1.45] break-words",
               isMine
                 ? "bg-white text-black"
-                : "bg-white/[0.06] text-white/95 border border-white/10",
+                : "bg-white/[0.04] text-white border border-white/[0.07]",
             )}
           >
             {replyPreview && (
               <div
                 className={cn(
-                  "rounded-lg px-2 py-1 mb-1 flex items-start gap-1.5 text-[11px] leading-snug border-l-2",
+                  "rounded-md px-2 py-1 mb-1 flex items-start gap-1.5 text-[11.5px] leading-snug border-l-2",
                   isMine
                     ? "bg-black/5 border-black/30 text-black/60"
-                    : "bg-white/[0.05] border-violet-400/50 text-white/55",
+                    : "bg-white/[0.03] border-[var(--accent)]/40 text-white/55",
                 )}
               >
                 <CornerUpLeft className="size-3 mt-0.5 flex-shrink-0 opacity-60" />
@@ -115,26 +111,26 @@ export function MessageBubble({
           <div
             className={cn(
               "absolute top-0 hidden group-hover:flex items-center gap-0.5 -translate-y-1/2 z-10",
-              isMine ? "-left-20" : "-right-20",
+              isMine ? "-left-[68px]" : "-right-[68px]",
             )}
           >
             <button
               onClick={() => setPickerOpen((v) => !v)}
-              className="size-6 rounded-full glass-strong flex items-center justify-center text-white/70 hover:text-white transition-colors"
+              className="size-6 rounded-md bg-[#16161a] border border-white/10 flex items-center justify-center text-white/65 hover:text-white hover:bg-[#1c1c20] transition-colors"
               aria-label="React"
             >
               <SmilePlus className="size-3" />
             </button>
             <button
               onClick={() => onReply(message)}
-              className="size-6 rounded-full glass-strong flex items-center justify-center text-white/70 hover:text-white transition-colors"
+              className="size-6 rounded-md bg-[#16161a] border border-white/10 flex items-center justify-center text-white/65 hover:text-white hover:bg-[#1c1c20] transition-colors"
               aria-label="Reply"
             >
               <Reply className="size-3" />
             </button>
             <button
               onClick={copyText}
-              className="size-6 rounded-full glass-strong flex items-center justify-center text-white/70 hover:text-white transition-colors"
+              className="size-6 rounded-md bg-[#16161a] border border-white/10 flex items-center justify-center text-white/65 hover:text-white hover:bg-[#1c1c20] transition-colors"
               aria-label="Copy"
             >
               <Copy className="size-3" />
@@ -156,11 +152,11 @@ export function MessageBubble({
         />
 
         {showTime && sentAt && (
-          <span className="text-[10px] text-white/30 px-1">
+          <span className="text-[10px] text-white/30 px-1 mt-0.5">
             {formatTime(sentAt)}
           </span>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

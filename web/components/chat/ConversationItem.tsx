@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { Users, Pin, PinOff, BellOff, Bell } from "lucide-react";
 import type { Conversation, DecodedMessage } from "@xmtp/browser-sdk";
 import { cn } from "@/lib/cn";
@@ -57,25 +56,22 @@ export function ConversationItem({
   })();
 
   return (
-    <motion.div
-      whileHover={{ scale: 1.005 }}
-      whileTap={{ scale: 0.99 }}
-      transition={{ duration: 0.1 }}
+    <div
       onClick={onSelect}
       role="button"
       className={cn(
-        "group w-full text-left rounded-xl p-2.5 flex gap-3 items-center transition-colors relative cursor-pointer",
+        "group w-full text-left rounded-md px-2 py-2 flex gap-2.5 items-center transition-colors relative cursor-pointer",
         active
-          ? "bg-white/[0.07] border border-white/10"
-          : "border border-transparent hover:bg-white/[0.03]",
+          ? "bg-white/[0.06]"
+          : "hover:bg-white/[0.03]",
       )}
     >
       {isGroupConv ? (
-        <div className="size-9 rounded-full bg-white/[0.05] border border-white/[0.08] flex items-center justify-center flex-shrink-0">
-          <Users className="size-4 text-white/70" />
+        <div className="size-8 rounded-md bg-white/[0.04] border border-white/[0.08] flex items-center justify-center flex-shrink-0">
+          <Users className="size-3.5 text-white/65" />
         </div>
       ) : (
-        <PeerAvatar address={peerAddress} size={36} />
+        <PeerAvatar address={peerAddress} size={32} />
       )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-2">
@@ -118,7 +114,7 @@ export function ConversationItem({
           )}
         </div>
       </div>
-      <div className="absolute right-1 top-1 flex items-center gap-0.5">
+      <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5">
         <button
           type="button"
           onClick={(e) => {
@@ -154,6 +150,6 @@ export function ConversationItem({
           {pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
         </button>
       </div>
-    </motion.div>
+    </div>
   );
 }
