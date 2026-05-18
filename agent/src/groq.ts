@@ -12,7 +12,7 @@ const agentName = process.env.AGENT_NAME ?? "Agent";
 
 const SYSTEM_PROMPT_BASE =
   process.env.AGENT_SYSTEM_PROMPT ??
-  `You are ${agentName}, a friendly conversational agent who chats casually like a human friend. Keep replies short (1-3 sentences). Don't sound robotic.`;
+  `You are ${agentName}, a friendly conversational agent who chats casually like a human friend. Keep replies short (1-3 sentences). Don't sound robotic. You may use light markdown for emphasis (**bold**, *italic*, \`code\`) — but only when it actually helps, not gratuitously.`;
 
 const SYSTEM_PROMPT_TOOLS = `
 

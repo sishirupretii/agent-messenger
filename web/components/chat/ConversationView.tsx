@@ -11,6 +11,8 @@ import { PeerName } from "@/components/ui/PeerName";
 import { MessageBubble } from "./MessageBubble";
 import { MessageInput, type ReplyTarget } from "./MessageInput";
 import { TypingDots } from "./TypingDots";
+import { DateSeparator, sameDay } from "./DateSeparator";
+import { Fragment } from "react";
 import { cn } from "@/lib/cn";
 import { shortAddress } from "@/lib/format";
 import { isGroup, getGroupName } from "@/lib/conversation";
@@ -191,14 +193,28 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
           const next = messages[i + 1];
           const nextIsMine = next ? next.senderInboxId === client?.inboxId : false;
           const isLastInRun = !next || nextIsMine !== isMine;
+
+          // Date separator before the first message of a new day
+          const myNs = (m as unknown as { sentAtNs?: bigint }).sentAtNs;
+          const myDate = myNs ? new Date(Number(myNs / 1_000_000n)) : null;
+          const prev = i > 0 ? messages[i - 1] : null;
+          const prevNs = prev
+            ? (prev as unknown as { sentAtNs?: bigint }).sentAtNs
+            : null;
+          const prevDate = prevNs ? new Date(Number(prevNs / 1_000_000n)) : null;
+          const showSeparator =
+            myDate && (!prevDate || !sameDay(prevDate, myDate));
+
           return (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              isMine={isMine}
-              showTime={isLastInRun}
-              onReply={startReply}
-            />
+            <Fragment key={m.id}>
+              {showSeparator && myDate && <DateSeparator date={myDate} />}
+              <MessageBubble
+                message={m}
+                isMine={isMine}
+                showTime={isLastInRun}
+                onReply={startReply}
+              />
+            </Fragment>
           );
         })}
         {expecting && (

@@ -66,6 +66,10 @@ type ChatContextValue = {
   unreadByConvId: Map<string, number>;
   expectingReplyByConvId: Map<string, boolean>;
 
+  // pins
+  pinnedIds: Set<string>;
+  togglePin: (convId: string) => void;
+
   // actions
   openOrCreateDmWith: (address: string) => Promise<Dm | null>;
   createGroupWith: (
@@ -74,12 +78,15 @@ type ChatContextValue = {
   ) => Promise<Group | null>;
   sendMessage: (text: string, replyToId?: string) => Promise<void>;
   sendReaction: (messageId: string, emoji: string, action?: "add" | "remove") => Promise<void>;
+  leaveGroup: (convId: string) => Promise<boolean>;
   markRead: () => Promise<void>;
 
   // search
   searchQuery: string;
   setSearchQuery: (q: string) => void;
 };
+
+const PINS_KEY = "agent-messenger:pinned";
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
@@ -110,6 +117,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     new Map(),
   );
   const [searchQuery, setSearchQuery] = useState("");
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = localStorage.getItem(PINS_KEY);
+      if (!raw) return new Set();
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed.filter((x): x is string => typeof x === "string"));
+      return new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const togglePin = useCallback((convId: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(convId)) next.delete(convId);
+      else next.add(convId);
+      try {
+        localStorage.setItem(PINS_KEY, JSON.stringify(Array.from(next)));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
 
   const activeIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -518,6 +551,34 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [activeConversationId, conversations, messagesByConvId, loadMessagesFor],
   );
 
+  // ---------------- leave group ----------------
+  const leaveGroup = useCallback(
+    async (convId: string): Promise<boolean> => {
+      const conv = conversations.find((c) => c.id === convId);
+      if (!conv) return false;
+      try {
+        const reqRemoval = (conv as unknown as { requestRemoval?: () => Promise<void> })
+          .requestRemoval;
+        if (typeof reqRemoval !== "function") {
+          toast.error("This conversation can't be left");
+          return false;
+        }
+        await reqRemoval.call(conv);
+        setConversations((prev) => prev.filter((c) => c.id !== convId));
+        if (activeIdRef.current === convId) {
+          _setActiveConversationId(null);
+        }
+        toast.success("Left group");
+        return true;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error("Couldn't leave group", { description: msg });
+        return false;
+      }
+    },
+    [conversations],
+  );
+
   // ---------------- explicit mark-read (used by ConversationView) ----------------
   const markRead = useCallback(async () => {
     const id = activeConversationId;
@@ -561,7 +622,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     createGroupWith,
     sendMessage,
     sendReaction,
+    leaveGroup,
     markRead,
+    pinnedIds,
+    togglePin,
     searchQuery,
     setSearchQuery,
   };

@@ -2,13 +2,14 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
-import { X, Users } from "lucide-react";
+import { X, Users, LogOut } from "lucide-react";
 import type { Conversation } from "@xmtp/browser-sdk";
 import { PeerAvatar } from "@/components/ui/Avatar";
 import { PeerName } from "@/components/ui/PeerName";
 import { shortAddress } from "@/lib/format";
 import { getGroupName } from "@/lib/conversation";
 import { Spinner } from "@/components/ui/Spinner";
+import { useChat } from "@/context/ChatProvider";
 
 type MemberEntry = {
   inboxId: string;
@@ -27,7 +28,9 @@ export function GroupInfoPanel({
   group: Conversation;
   ownInboxId: string | null;
 }) {
+  const { leaveGroup } = useChat();
   const [members, setMembers] = useState<MemberEntry[] | null>(null);
+  const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -62,6 +65,15 @@ export function GroupInfoPanel({
   }, [open, group, ownInboxId]);
 
   const groupName = getGroupName(group);
+
+  async function handleLeave() {
+    if (leaving) return;
+    if (!confirm(`Leave "${groupName ?? "this group"}"?`)) return;
+    setLeaving(true);
+    const ok = await leaveGroup(group.id);
+    setLeaving(false);
+    if (ok) onClose();
+  }
 
   return (
     <AnimatePresence>
@@ -145,6 +157,17 @@ export function GroupInfoPanel({
                   </div>
                 ))
               )}
+            </div>
+
+            <div className="border-t border-white/[0.06] pt-3 mt-4">
+              <button
+                onClick={handleLeave}
+                disabled={leaving}
+                className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-300 text-sm font-medium rounded-xl px-3 py-2 flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              >
+                {leaving ? <Spinner size={12} /> : <LogOut className="size-3.5" />}
+                {leaving ? "Leaving…" : "Leave group"}
+              </button>
             </div>
           </motion.div>
         </motion.div>

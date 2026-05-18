@@ -31,6 +31,8 @@ export function Sidebar({
     refreshConversations,
     searchQuery,
     setSearchQuery,
+    pinnedIds,
+    togglePin,
   } = useChat();
 
   const filteredAndSorted = useMemo(() => {
@@ -40,7 +42,7 @@ export function Sidebar({
       const last = msgs[msgs.length - 1];
       const ns = (last as unknown as { sentAtNs?: bigint } | undefined)?.sentAtNs;
       const t = ns ? Number(ns / 1_000_000n) : 0;
-      return { conv: c, lastTime: t, lastMessage: last };
+      return { conv: c, lastTime: t, lastMessage: last, pinned: pinnedIds.has(c.id) };
     });
     const filtered = !q
       ? withMeta
@@ -57,8 +59,11 @@ export function Sidebar({
             groupName.includes(q)
           );
         });
-    return filtered.sort((a, b) => b.lastTime - a.lastTime);
-  }, [conversations, messagesByConvId, peerInfoByConvId, searchQuery]);
+    return filtered.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return b.lastTime - a.lastTime;
+    });
+  }, [conversations, messagesByConvId, peerInfoByConvId, searchQuery, pinnedIds]);
 
   return (
     <aside
@@ -141,7 +146,7 @@ export function Sidebar({
           )
         ) : (
           <div className="px-2 flex flex-col gap-1">
-            {filteredAndSorted.map(({ conv, lastMessage }) => (
+            {filteredAndSorted.map(({ conv, lastMessage, pinned }) => (
               <ConversationItem
                 key={conv.id}
                 conversation={conv}
@@ -149,7 +154,9 @@ export function Sidebar({
                 active={conv.id === activeConversationId}
                 unread={unreadByConvId.get(conv.id) ?? 0}
                 lastMessage={lastMessage}
+                pinned={pinned}
                 onSelect={() => setActiveConversationId(conv.id)}
+                onTogglePin={() => togglePin(conv.id)}
               />
             ))}
           </div>

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { SmilePlus, Reply, CornerUpLeft } from "lucide-react";
+import { SmilePlus, Reply, CornerUpLeft, Copy } from "lucide-react";
+import { toast } from "sonner";
 import type { DecodedMessage } from "@xmtp/browser-sdk";
 import { cn } from "@/lib/cn";
 import { formatTime, nsToDate } from "@/lib/format";
@@ -50,6 +51,15 @@ export function MessageBubble({
     void sendReaction(message.id, emoji, "add");
   }
 
+  async function copyText() {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied");
+    } catch {
+      toast.error("Couldn't copy");
+    }
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -91,7 +101,7 @@ export function MessageBubble({
           <div
             className={cn(
               "absolute top-0 hidden group-hover:flex items-center gap-0.5 -translate-y-1/2 z-10",
-              isMine ? "-left-14" : "-right-14",
+              isMine ? "-left-20" : "-right-20",
             )}
           >
             <button
@@ -107,6 +117,13 @@ export function MessageBubble({
               aria-label="Reply"
             >
               <Reply className="size-3" />
+            </button>
+            <button
+              onClick={copyText}
+              className="size-6 rounded-full glass-strong flex items-center justify-center text-white/70 hover:text-white transition-colors"
+              aria-label="Copy"
+            >
+              <Copy className="size-3" />
             </button>
           </div>
 
