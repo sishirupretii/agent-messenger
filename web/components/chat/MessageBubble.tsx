@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SmilePlus, Reply, CornerUpLeft, Copy } from "lucide-react";
+import { SmilePlus, Reply, CornerUpLeft, Copy, Zap } from "lucide-react";
 import { toast } from "sonner";
 import type { DecodedMessage } from "@xmtp/browser-sdk";
 import { cn } from "@/lib/cn";
@@ -11,6 +11,7 @@ import { normalizeMessageContent } from "@/lib/message";
 import { ReactionPicker } from "./ReactionPicker";
 import { ReactionRow } from "./ReactionRow";
 import { PaymentCard } from "./PaymentCard";
+import { TipMenu } from "./TipMenu";
 import { PeerName } from "@/components/ui/PeerName";
 import { useChat } from "@/context/ChatProvider";
 
@@ -21,6 +22,7 @@ export function MessageBubble({
   senderLabel,
   senderAddress,
   onReply,
+  onTip,
 }: {
   message: DecodedMessage;
   isMine: boolean;
@@ -28,9 +30,12 @@ export function MessageBubble({
   senderLabel?: string;
   senderAddress?: string;
   onReply: (msg: DecodedMessage) => void;
+  /** Called with an ETH amount string (e.g. "0.001") when the user picks a tip. */
+  onTip?: (amount: string) => void;
 }) {
   const { sendReaction, ownInboxId } = useChat();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [tipOpen, setTipOpen] = useState(false);
 
   const { text, replyTo, isReply, isTransactionRef, transactionRef } =
     normalizeMessageContent(message);
@@ -149,12 +154,33 @@ export function MessageBubble({
             >
               <Copy className="size-3" />
             </button>
+            {!isMine && onTip && (
+              <button
+                onClick={() => {
+                  setTipOpen((v) => !v);
+                  setPickerOpen(false);
+                }}
+                className="size-6 rounded-md bg-[#16161a] border border-white/10 flex items-center justify-center text-white/65 hover:text-[var(--accent)] hover:bg-[#1c1c20] transition-colors"
+                aria-label="Tip"
+                title="Send a tip"
+              >
+                <Zap className="size-3" />
+              </button>
+            )}
           </div>
 
           <ReactionPicker
             open={pickerOpen}
             onPick={handlePick}
             align={isMine ? "right" : "left"}
+          />
+          <TipMenu
+            open={tipOpen}
+            align={isMine ? "right" : "left"}
+            onPick={(amount) => {
+              setTipOpen(false);
+              onTip?.(amount);
+            }}
           />
         </div>
 

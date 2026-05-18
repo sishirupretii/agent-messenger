@@ -40,6 +40,7 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentInitial, setPaymentInitial] = useState<string | undefined>();
   const [atBottom, setAtBottom] = useState(true);
   const [memberAddresses, setMemberAddresses] = useState<Map<string, string>>(
     new Map(),
@@ -300,6 +301,14 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
                 senderLabel={senderLabel}
                 senderAddress={senderAddress}
                 onReply={startReply}
+                onTip={
+                  !isGroupConv && peerAddress
+                    ? (amount) => {
+                        setPaymentInitial(amount);
+                        setPaymentOpen(true);
+                      }
+                    : undefined
+                }
               />
             </Fragment>
           );
@@ -367,9 +376,13 @@ export function ConversationView({ onBack }: { onBack: () => void }) {
       {!isGroupConv && peerAddress && (
         <PaymentModal
           open={paymentOpen}
-          onClose={() => setPaymentOpen(false)}
+          onClose={() => {
+            setPaymentOpen(false);
+            setPaymentInitial(undefined);
+          }}
           toAddress={peerAddress}
           peerLabel={knownAgent ? knownAgent.name : undefined}
+          initialAmount={paymentInitial}
         />
       )}
     </div>

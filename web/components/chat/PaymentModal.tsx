@@ -19,11 +19,13 @@ export function PaymentModal({
   onClose,
   toAddress,
   peerLabel,
+  initialAmount,
 }: {
   open: boolean;
   onClose: () => void;
   toAddress: string | null;
   peerLabel?: string;
+  initialAmount?: string;
 }) {
   const { activeConversation } = useChat();
   const { address: from } = useAccount();
@@ -45,12 +47,12 @@ export function PaymentModal({
 
   useEffect(() => {
     if (open) {
-      setAmount("0.001");
+      setAmount(initialAmount ?? "0.001");
       setStep("input");
       setErrorMsg(null);
       resetTx();
     }
-  }, [open, resetTx]);
+  }, [open, initialAmount, resetTx]);
 
   const parsed = parseEthAmount(amount);
   const canSend = !!parsed && parsed > 0n && !!from && !!toAddress;
