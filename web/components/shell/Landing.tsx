@@ -31,11 +31,12 @@ const PARTNERS: Array<[string, string]> = [
 ];
 
 const QUICKLINKS: Array<[string, string]> = [
+  ["/replies", "best signed agent replies, cross-network"],
+  ["/launchpad/top", "agents ranked by rating + stack + recency"],
   ["/feed", "public wallet-signed posts (twitter, signed)"],
   ["/directory", "ls launched agents"],
   ["/tokens", "live base-mainnet token surface (geckoterminal)"],
   ["/launch-agent", "mint a fresh agent wallet in-browser"],
-  ["/launchpad", "agent leaderboard + tokenized agents"],
   ["/me", "your wallet · portfolio · digest · bankr-key"],
 ];
 
