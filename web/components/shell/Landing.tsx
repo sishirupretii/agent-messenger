@@ -455,31 +455,47 @@ export function Landing() {
 }
 
 /* ============================================================
-   3D CONSTELLATION
-   Real CSS-3D rotation of partner badges around a central axis. Each
-   badge is positioned in 3D space via translate3d on a sphere/ring,
-   container spins continuously, parent has perspective. A subtle
-   radial gradient sits behind it for depth. Pure GPU-composited
-   transforms — no three.js, no canvas, no extra deps.
+   NETWORK GRAPH BACKGROUND
+   Partner nodes pinned at the edges of the hero with curved SVG
+   beams flowing into a central SIGNA core. Light pulses travel
+   along each beam every few seconds, visualizing "kernel routes
+   to specialists". No 3D spinning, no mirrored text — every label
+   stays readable. Pure SVG + framer-motion.
    ============================================================ */
 
-type Partner = { name: string; tone: string };
+type Partner = {
+  name: string;
+  /** percentage position on the hero, e.g. { x: 5, y: 12 } */
+  pos: { x: number; y: number };
+  /** hex stroke color for the beam + dot */
+  color: string;
+};
 
-const ORBIT: Partner[] = [
-  { name: "@bankrbot", tone: "from-violet-400/50 to-violet-500/20" },
-  { name: "@gitlawb", tone: "from-emerald-400/50 to-emerald-500/20" },
-  { name: "@miroshark_", tone: "from-cyan-400/50 to-cyan-500/20" },
-  { name: "AEON", tone: "from-amber-400/50 to-amber-500/20" },
-  { name: "Base", tone: "from-blue-400/50 to-blue-500/20" },
-  { name: "XMTP", tone: "from-rose-400/50 to-rose-500/20" },
-  { name: "Groq", tone: "from-orange-400/50 to-orange-500/20" },
-  { name: "ERC-8004", tone: "from-fuchsia-400/50 to-fuchsia-500/20" },
+/**
+ * Hand-placed partner positions in a ring around the headline area.
+ * The headline sits roughly in the left-center; we drop the nodes
+ * along the right + corners so the constellation frames the hero
+ * without overlapping the type. Coordinates are in % of the hero
+ * box (which is 100svh tall on desktop).
+ */
+const NETWORK: Partner[] = [
+  { name: "@bankrbot", pos: { x: 78, y: 8 }, color: "#a78bfa" },
+  { name: "@gitlawb", pos: { x: 92, y: 28 }, color: "#34d399" },
+  { name: "@miroshark_", pos: { x: 95, y: 58 }, color: "#22d3ee" },
+  { name: "AEON", pos: { x: 84, y: 82 }, color: "#fbbf24" },
+  { name: "Base", pos: { x: 50, y: 92 }, color: "#60a5fa" },
+  { name: "XMTP", pos: { x: 14, y: 88 }, color: "#fb7185" },
+  { name: "Groq", pos: { x: 6, y: 18 }, color: "#fb923c" },
+  { name: "ERC-8004", pos: { x: 26, y: 6 }, color: "#e879f9" },
 ];
+
+/** Hub the beams point at — same as the visual center of the hero. */
+const HUB = { x: 52, y: 50 };
 
 function AnimatedMesh() {
   return (
-    <div aria-hidden className="absolute inset-0 pointer-events-none">
-      {/* primary brand glow — kept from prior bg, dimmed */}
+    <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden">
+      {/* primary brand glow — atmosphere */}
       <motion.div
         animate={{ x: [0, 60, -20, 0], y: [0, -30, 40, 0] }}
         transition={{ duration: 28, repeat: Infinity, ease: "easeInOut" }}
@@ -489,7 +505,6 @@ function AnimatedMesh() {
             "radial-gradient(circle, color-mix(in oklab, var(--accent) 70%, transparent), transparent 70%)",
         }}
       />
-      {/* cool violet glow — depth */}
       <motion.div
         animate={{ x: [0, -50, 30, 0], y: [0, 50, -20, 0] }}
         transition={{ duration: 36, repeat: Infinity, ease: "easeInOut" }}
@@ -500,169 +515,181 @@ function AnimatedMesh() {
         }}
       />
 
-      {/* 3D ORBIT */}
-      <Orbit3D />
+      {/* network beams — full-bleed SVG */}
+      <NetworkGraph />
 
-      {/* top fade so the header bar stays legible */}
+      {/* top + bottom fades for legibility */}
       <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 via-black/20 to-transparent" />
-      {/* bottom fade so the hero copy reads cleanly */}
       <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/40 to-transparent" />
     </div>
   );
 }
 
-/**
- * The 3D constellation. Container holds a slowly-rotating ring of
- * partner badges. Each badge sits on the ring at a different angle
- * with a slight y-offset (so it reads as a 3D sphere, not a flat
- * carousel). The whole assembly is tilted and spins on the Y axis.
- *
- * Math: for N partners at angle θ = i * (2π / N):
- *   x = R * cos(θ)
- *   y = R_vertical * sin(i * π / N) - drift
- *   z = R * sin(θ)
- *
- * CSS:
- *   parent .scene has perspective: 1200px
- *   .orbit has transform-style: preserve-3d + animate rotateY
- *   each .star has translate3d(x, y, z) + rotateY(-θ) to face camera
- */
-function Orbit3D() {
+function NetworkGraph() {
   return (
-    <div
-      className="absolute inset-0 flex items-center justify-center"
-      style={{ perspective: "1400px" }}
-    >
-      <motion.div
-        animate={{ rotateY: 360 }}
-        transition={{ duration: 38, repeat: Infinity, ease: "linear" }}
-        className="relative"
-        style={{
-          width: 600,
-          height: 600,
-          transformStyle: "preserve-3d",
-          // tilt the whole sphere so we see the top + bottom orbits too
-          transform: "rotateX(8deg) rotateZ(-2deg)",
-        }}
+    <>
+      {/* SVG layer: curved beams + traveling light pulses */}
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="absolute inset-0 w-full h-full"
       >
-        {/* faint orbital ring (helps readability) */}
-        <div
-          aria-hidden
-          className="absolute inset-0 rounded-full border border-white/[0.04]"
-          style={{
-            transform: "rotateX(70deg)",
-            transformStyle: "preserve-3d",
-          }}
-        />
-
-        {ORBIT.map((p, i) => {
-          const N = ORBIT.length;
-          const theta = (i / N) * Math.PI * 2;
-          const R = 260;
-          const x = Math.cos(theta) * R;
-          const z = Math.sin(theta) * R;
-          // sinusoidal y so they form a wave around the equator
-          const y = Math.sin(i * (Math.PI * 2) * 0.35) * 70;
-          return (
-            <PartnerStar
+        <defs>
+          {NETWORK.map((p, i) => (
+            <linearGradient
               key={p.name}
-              partner={p}
-              x={x}
-              y={y}
-              z={z}
-              thetaDeg={(theta * 180) / Math.PI}
-              bobDelay={i * 0.35}
-            />
+              id={`beam-${i}`}
+              gradientUnits="userSpaceOnUse"
+              x1={p.pos.x}
+              y1={p.pos.y}
+              x2={HUB.x}
+              y2={HUB.y}
+            >
+              <stop offset="0%" stopColor={p.color} stopOpacity="0" />
+              <stop offset="30%" stopColor={p.color} stopOpacity="0.55" />
+              <stop offset="100%" stopColor={p.color} stopOpacity="0" />
+            </linearGradient>
+          ))}
+        </defs>
+
+        {NETWORK.map((p, i) => {
+          // gentle quadratic curve from node → hub (control point offset)
+          const cx = (p.pos.x + HUB.x) / 2 + (p.pos.x > HUB.x ? -6 : 6);
+          const cy = (p.pos.y + HUB.y) / 2 + (p.pos.y > HUB.y ? -4 : 4);
+          const d = `M ${p.pos.x} ${p.pos.y} Q ${cx} ${cy} ${HUB.x} ${HUB.y}`;
+          return (
+            <g key={p.name}>
+              {/* faint static beam */}
+              <path
+                d={d}
+                stroke={`url(#beam-${i})`}
+                strokeWidth="0.18"
+                fill="none"
+                opacity="0.65"
+                vectorEffect="non-scaling-stroke"
+              />
+              {/* traveling pulse — short dashed segment animated along path */}
+              <motion.path
+                d={d}
+                stroke={p.color}
+                strokeWidth="0.32"
+                fill="none"
+                strokeLinecap="round"
+                strokeDasharray="1.5 60"
+                initial={{ strokeDashoffset: 60 }}
+                animate={{ strokeDashoffset: -1.5 }}
+                transition={{
+                  duration: 4 + (i % 3),
+                  delay: i * 0.45,
+                  repeat: Infinity,
+                  ease: "linear",
+                }}
+                vectorEffect="non-scaling-stroke"
+                opacity="0.85"
+              />
+            </g>
           );
         })}
 
-        {/* center node — "SIGNA" pulse */}
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-          style={{ transform: "translate3d(-50%, -50%, 0)" }}
-        >
-          <CenterNode />
-        </div>
-      </motion.div>
-    </div>
+        {/* hub core ring (drawn after beams so it sits on top) */}
+        <motion.circle
+          cx={HUB.x}
+          cy={HUB.y}
+          r="2.4"
+          fill="none"
+          stroke="rgba(255,255,255,0.25)"
+          strokeWidth="0.15"
+          vectorEffect="non-scaling-stroke"
+          animate={{ r: [2.4, 3.6, 2.4] }}
+          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+        />
+      </svg>
+
+      {/* DOM layer: partner badges positioned absolutely */}
+      <div className="absolute inset-0">
+        {NETWORK.map((p, i) => (
+          <PartnerNode key={p.name} partner={p} delay={i * 0.12} />
+        ))}
+        {/* SIGNA core glyph at the hub */}
+        <SignaCore />
+      </div>
+    </>
   );
 }
 
-function PartnerStar({
+function PartnerNode({
   partner,
-  x,
-  y,
-  z,
-  thetaDeg,
-  bobDelay,
+  delay,
 }: {
   partner: Partner;
-  x: number;
-  y: number;
-  z: number;
-  thetaDeg: number;
-  bobDelay: number;
+  delay: number;
 }) {
   return (
     <motion.div
-      // bob each star independently for life
-      animate={{
-        y: [y, y - 14, y, y + 14, y],
-      }}
-      transition={{
-        duration: 7 + (bobDelay % 3),
-        delay: bobDelay,
-        repeat: Infinity,
-        ease: "easeInOut",
-      }}
-      className="absolute top-1/2 left-1/2"
-      style={{
-        // base position; the orbit spins us via parent rotateY.
-        transform: `translate3d(${x}px, ${y}px, ${z}px) rotateY(${-thetaDeg}deg)`,
-        transformStyle: "preserve-3d",
-      }}
+      initial={{ opacity: 0, scale: 0.85 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.6, delay: 0.4 + delay, ease: [0.22, 1, 0.36, 1] }}
+      className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-2"
+      style={{ left: `${partner.pos.x}%`, top: `${partner.pos.y}%` }}
     >
-      <div
-        className={
-          "px-3 py-1.5 rounded-full border border-white/[0.12] bg-gradient-to-br " +
-          partner.tone +
-          " backdrop-blur-sm shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
-        }
-        style={{
-          // counter-translate y back to the base so the bob is relative
-          transform: `translate3d(-50%, calc(-50% - ${y}px), 0)`,
+      {/* dot — pulses with the partner color */}
+      <motion.span
+        className="relative flex h-2 w-2 flex-shrink-0"
+        animate={{ scale: [1, 1.2, 1] }}
+        transition={{
+          duration: 2.4,
+          delay: delay * 2,
+          repeat: Infinity,
+          ease: "easeInOut",
         }}
       >
-        <span className="text-[12px] font-medium text-white/90 whitespace-nowrap font-mono">
-          {partner.name}
-        </span>
-      </div>
+        <span
+          className="absolute inline-flex h-full w-full rounded-full opacity-50 animate-ping"
+          style={{ background: partner.color }}
+        />
+        <span
+          className="relative inline-flex h-2 w-2 rounded-full"
+          style={{
+            background: partner.color,
+            boxShadow: `0 0 12px ${partner.color}`,
+          }}
+        />
+      </motion.span>
+      {/* label */}
+      <span className="text-[11px] font-mono text-white/75 whitespace-nowrap select-none">
+        {partner.name}
+      </span>
     </motion.div>
   );
 }
 
-function CenterNode() {
+function SignaCore() {
   return (
-    <motion.div
-      animate={{
-        scale: [1, 1.06, 1],
-        boxShadow: [
-          "0 0 0 0 rgba(93, 208, 198, 0.4)",
-          "0 0 0 30px rgba(93, 208, 198, 0)",
-          "0 0 0 0 rgba(93, 208, 198, 0)",
-        ],
-      }}
-      transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-      className="size-16 rounded-full flex items-center justify-center border border-white/15"
-      style={{
-        background:
-          "radial-gradient(circle, color-mix(in oklab, var(--accent) 40%, transparent), color-mix(in oklab, var(--accent) 10%, transparent))",
-      }}
+    <div
+      className="absolute -translate-x-1/2 -translate-y-1/2"
+      style={{ left: `${HUB.x}%`, top: `${HUB.y}%` }}
     >
-      <span className="font-display font-medium text-[14px] text-white tracking-[0.12em]">
-        SIGNA
-      </span>
-    </motion.div>
+      <motion.div
+        animate={{
+          scale: [1, 1.06, 1],
+          boxShadow: [
+            "0 0 0 0 rgba(93, 208, 198, 0.45)",
+            "0 0 0 28px rgba(93, 208, 198, 0)",
+            "0 0 0 0 rgba(93, 208, 198, 0)",
+          ],
+        }}
+        transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+        className="size-12 rounded-full flex items-center justify-center border border-white/20 backdrop-blur-sm"
+        style={{
+          background:
+            "radial-gradient(circle, color-mix(in oklab, var(--accent) 40%, transparent), color-mix(in oklab, var(--accent) 8%, transparent))",
+        }}
+      >
+        <span className="font-display font-medium text-[10px] text-white tracking-[0.18em]">
+          SIGNA
+        </span>
+      </motion.div>
+    </div>
   );
 }
 
