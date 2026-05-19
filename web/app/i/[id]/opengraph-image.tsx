@@ -12,7 +12,12 @@ export const contentType = "image/png";
  * stark contrast. Pulls the row from /api/interactions/[id] at render
  * time. Edge runtime so the card returns in <200ms.
  */
-export default async function Image({ params }: { params: { id: string } }) {
+export default async function Image({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
   let q = "";
   let a = "";
   let speaker = "signa agent";
@@ -20,7 +25,7 @@ export default async function Image({ params }: { params: { id: string } }) {
   let signed = false;
   try {
     const res = await fetch(
-      `https://www.signaagent.xyz/api/interactions/${params.id}`,
+      `https://www.signaagent.xyz/api/interactions/${id}`,
       { cache: "no-store" },
     );
     if (res.ok) {

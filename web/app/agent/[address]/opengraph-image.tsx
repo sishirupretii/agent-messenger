@@ -19,10 +19,11 @@ export const contentType = "image/png";
 export default async function Image({
   params,
 }: {
-  params: { address: string };
+  params: Promise<{ address: string }>;
 }) {
+  const { address: rawAddress } = await params;
   let name = "signa agent";
-  let address = params.address;
+  let address = rawAddress;
   let tags: string[] = [];
   let did: string | null = null;
   let erc8004: string | null = null;
@@ -30,7 +31,7 @@ export default async function Image({
   let miroshark: string | null = null;
   try {
     const res = await fetch(
-      `https://www.signaagent.xyz/api/agents/${params.address.toLowerCase()}`,
+      `https://www.signaagent.xyz/api/agents/${rawAddress.toLowerCase()}`,
       { cache: "no-store" },
     );
     if (res.ok) {
