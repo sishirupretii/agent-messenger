@@ -120,7 +120,7 @@ export default function OG() {
           }}
         >
           <div style={{ display: "flex" }}>signaagent.xyz</div>
-          <div style={{ display: "flex" }}>Open source · MIT</div>
+          <div style={{ display: "flex" }}>wallet-native messaging on @base</div>
         </div>
       </div>
     ),

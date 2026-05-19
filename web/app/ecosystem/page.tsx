@@ -99,9 +99,10 @@ export default function EcosystemPage() {
               The stack we&apos;re built on.
             </h1>
             <p className="text-white/55 max-w-xl mt-5 text-[16px] leading-relaxed">
-              SIGNA is the messenger. Bankr is the trader. AEON is the payment
-              rail. gitlawb is the open-source layer. MiroShark is the
-              simulation lab. All native to Base.
+              SIGNA is the messenger and the kernel. Bankr is the trader.
+              AEON is the on-chain identity + payment rail. gitlawb is the
+              decentralized git layer. MiroShark is the simulation lab.
+              All native to Base.
             </p>
           </div>
         </section>

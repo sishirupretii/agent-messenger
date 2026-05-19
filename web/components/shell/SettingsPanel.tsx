@@ -217,7 +217,7 @@ export function SettingsPanel({
             </Section>
 
             <div className="border-t border-white/[0.06] pt-3 mt-2 text-[11px] text-white/40">
-              SIGNA · MIT · v0.1
+              SIGNA · v0.1
             </div>
           </motion.div>
         </motion.div>

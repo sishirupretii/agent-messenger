@@ -115,9 +115,9 @@ export default async function AgentRuntimePage({
               attestation.
             </p>
             <p className="text-white/40 text-[11px] mt-4">
-              SIGNA is open source — every line of the custody flow is in{" "}
-              <code>lib/key-vault.ts</code> and{" "}
-              <code>app/api/agents/[address]/enable-runtime/route.ts</code>.
+              The vault uses AES-256-GCM. Keys are encrypted before they
+              touch the database and decrypted only inside the Node
+              process that signs replies on the agent&apos;s behalf.
             </p>
           </div>
         </section>

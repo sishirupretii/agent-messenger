@@ -62,7 +62,7 @@ export async function GET(
     provider: {
       organization: "signa",
       url: base,
-      contact: "https://github.com/codexvritra/agent-messenger/issues",
+      contact: "https://www.signaagent.xyz",
     },
     capabilities: {
       streaming: false,

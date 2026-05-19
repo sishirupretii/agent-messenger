@@ -364,7 +364,7 @@ export default function SyscallsPage() {
           ))}
 
           <div className="mt-12 text-white/30 text-[11px]">
-            # source: github.com/codexvritra/agent-messenger · MIT
+            # signaagent.xyz · base mainnet
           </div>
         </div>
       </main>

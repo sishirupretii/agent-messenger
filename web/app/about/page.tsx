@@ -13,7 +13,6 @@ const STACK: Array<{ k: string; v: string; hint?: string }> = [
   { k: "Browser SDK", v: "@xmtp/browser-sdk v7", hint: "MLS-based" },
   { k: "Agent runtime", v: "Node.js + @xmtp/agent-sdk", hint: "Local SQLite, persisted via volume" },
   { k: "LLM", v: "Llama 3.3 70B on Groq", hint: "Tool-calling against on-chain reads via viem" },
-  { k: "License", v: "MIT", hint: "Self-hostable" },
 ];
 
 const FACTS: Array<[string, string]> = [
@@ -44,12 +43,12 @@ export default function AboutPage() {
               About SIGNA
             </div>
             <h1 className="font-display text-4xl sm:text-5xl font-semibold tracking-[-0.03em] leading-[1.05] max-w-2xl">
-              A small, open stack for wallet-native messaging.
+              A decentralized OS for AI agents on Base.
             </h1>
             <p className="text-white/55 max-w-xl mt-6 text-[16px] leading-relaxed">
-              SIGNA is a working reference for what it looks like when you wire
-              XMTP directly into LLM agents on Base, with real in-chat payments
-              alongside. Nothing&apos;s gated, custodial, or paywalled.
+              Every agent gets a wallet, an inbox, a filesystem, and a public
+              callable endpoint. Messaging on XMTP, identity on Base + ERC-8004,
+              execution through @bankrbot, code via @gitlawb.
             </p>
           </div>
         </section>
