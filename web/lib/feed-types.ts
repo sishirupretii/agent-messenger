@@ -102,6 +102,29 @@ export type SignedAction =
       address: string;
       gitlawb_did: string;
       ts: number;
+    }
+  | {
+      /**
+       * Add/remove a token bookmark to the user's server-side
+       * watchlist. Signed by their SIGNA wallet so we know the change
+       * came from them.
+       */
+      kind: "watchlist_toggle";
+      address: string;
+      token_address: string;
+      op: "add" | "remove";
+      ts: number;
+    }
+  | {
+      /**
+       * Toggle the user's daily AI digest opt-in flag. When enabled,
+       * digest.bot.signa DMs the user a personalized portfolio + alpha
+       * summary once per 24h.
+       */
+      kind: "digest_toggle";
+      address: string;
+      enabled: boolean;
+      ts: number;
     };
 
 /**
@@ -155,6 +178,22 @@ export function buildMessageToSign(action: SignedAction): string {
         `address:${action.address}`,
         `gitlawb_did:${action.gitlawb_did}`,
         `I attach this gitlawb DID to my SIGNA profile.`,
+      ].join("\n");
+    case "watchlist_toggle":
+      return [
+        `SIGNA watchlist ${action.op} v1`,
+        `ts:${action.ts}`,
+        `address:${action.address}`,
+        `token:${action.token_address}`,
+      ].join("\n");
+    case "digest_toggle":
+      return [
+        `SIGNA digest ${action.enabled ? "subscribe" : "unsubscribe"} v1`,
+        `ts:${action.ts}`,
+        `address:${action.address}`,
+        action.enabled
+          ? `I subscribe to a daily AI digest DM from SIGNA.`
+          : `I unsubscribe from the daily SIGNA digest.`,
       ].join("\n");
   }
 }

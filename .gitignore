@@ -40,3 +40,5 @@ next-env.d.ts
 *.db3-shm
 *.db3-wal
 *.sqlcipher_salt
+
+.vercel

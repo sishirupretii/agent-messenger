@@ -79,3 +79,23 @@ jobs:
             echo "::error::cron response did not contain ok:true"
             exit 1
           }
+
+  digest:
+    name: daily AI digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Poll digest cron
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Pinging /api/cron/digest…"
+          response=$(curl -sS --fail-with-body \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "https://www.signaagent.xyz/api/cron/digest")
+          echo "$response"
+          echo "$response" | grep -q '"ok":true' || {
+            echo "::error::digest cron did not contain ok:true"
+            exit 1
+          }

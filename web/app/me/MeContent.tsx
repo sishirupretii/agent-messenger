@@ -19,6 +19,7 @@ import { formatUsd, formatPct } from "@/lib/geckoterminal";
 import { getWatchlist } from "@/lib/watchlist";
 import { useChat } from "@/context/ChatProvider";
 import { isDm } from "@/lib/conversation";
+import { DigestToggle } from "./DigestToggle";
 import type { Position, PortfolioSnapshot } from "@/lib/portfolio";
 
 /**
@@ -378,6 +379,8 @@ export function MeContent() {
           )}
         </div>
       </section>
+
+      <DigestToggle address={address} />
 
       {/* Quick links */}
       <section className="border-b border-white/[0.06]">

@@ -2,16 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { Bookmark, BookmarkCheck } from "lucide-react";
+import { useAccount, useSignMessage } from "wagmi";
 import {
   isWatched,
   addToWatchlist,
   removeFromWatchlist,
+  mergeFromServer,
 } from "@/lib/watchlist";
 import { toast } from "sonner";
 
 /**
- * Bookmark/unbookmark a token. State is localStorage; survives reload.
- * No auth required — anyone can build their own watchlist immediately.
+ * Bookmark/unbookmark a token. State is localStorage primarily; when a
+ * wallet is connected, a wallet-signed POST mirrors the change to
+ * /api/me/watchlist so it follows the user across devices.
+ *
+ * No wallet = local-only (still works instantly).
+ * Wallet connected = local + server sync.
  */
 export function WatchButton({
   address,
@@ -20,23 +26,47 @@ export function WatchButton({
   address: string;
   symbol: string;
 }) {
+  const { address: connectedAddress } = useAccount();
+  const { signMessageAsync } = useSignMessage();
   const [watched, setWatched] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     setWatched(isWatched(address));
-  }, [address]);
+    // On first mount with a connected wallet, pull the server-side
+    // watchlist and merge so prior bookmarks reappear.
+    if (connectedAddress) {
+      void mergeFromServer(connectedAddress).then(() => {
+        setWatched(isWatched(address));
+      });
+    }
+  }, [address, connectedAddress]);
 
-  function toggle() {
+  async function toggle() {
+    const signOpts = connectedAddress
+      ? {
+          walletAddress: connectedAddress,
+          signMessage: signMessageAsync,
+        }
+      : undefined;
+
     if (watched) {
-      removeFromWatchlist(address);
+      await removeFromWatchlist(address, signOpts);
       setWatched(false);
-      toast.success(`$${symbol || "token"} removed from watchlist`);
+      toast.success(
+        connectedAddress
+          ? `$${symbol || "token"} unbookmarked (syncing…)`
+          : `$${symbol || "token"} unbookmarked locally`,
+      );
     } else {
-      addToWatchlist(address);
+      await addToWatchlist(address, signOpts);
       setWatched(true);
-      toast.success(`$${symbol || "token"} added to watchlist`);
+      toast.success(
+        connectedAddress
+          ? `$${symbol || "token"} bookmarked (syncing…)`
+          : `$${symbol || "token"} bookmarked locally`,
+      );
     }
   }
 

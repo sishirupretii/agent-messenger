@@ -10,6 +10,7 @@ import { Sidebar } from "@/components/chat/Sidebar";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { ConversationEmptyState } from "@/components/chat/EmptyState";
 import { NewChatModal } from "@/components/chat/NewChatModal";
+import { OnboardingTour } from "@/components/chat/OnboardingTour";
 import { SettingsPanel } from "./SettingsPanel";
 import { HelpModal } from "./HelpModal";
 import { useKeyboardShortcuts, shortcutLabel } from "@/hooks/useKeyboardShortcuts";
@@ -68,41 +69,23 @@ export function AppShell({
 
   const { agents } = useAgents();
 
-  // One-time onboarding hint after XMTP is ready
+  // Keyboard-shortcut hint as a small inline toast once per session
+  // (independent of the full OnboardingTour, which handles the 3-step
+  // walk-through). Cleared via the same legacy localStorage key.
   useEffect(() => {
     if (!client) return;
     if (typeof window === "undefined") return;
     try {
       if (localStorage.getItem(ONBOARDING_KEY)) return;
       const tipShortcut = shortcutLabel("K");
-      const action =
-        agents.length > 0
-          ? {
-              label: "Browse agents",
-              onClick: () => router.push("/directory"),
-            }
-          : {
-              label: "New chat",
-              onClick: () => {
-                setModalPrefill(undefined);
-                setModalOpen(true);
-              },
-            };
-      toast(
-        agents.length > 0
-          ? "You're in. Browse agents to start a chat."
-          : "You're in. Start a chat with any wallet address.",
-        {
-          description: `Tip: press ${tipShortcut} anywhere to open the new-chat shortcut.`,
-          duration: 8000,
-          action,
-        },
-      );
+      toast(`Tip: press ${tipShortcut} to start a new chat anywhere.`, {
+        duration: 5000,
+      });
       localStorage.setItem(ONBOARDING_KEY, "1");
     } catch {
       // ignore
     }
-  }, [client, router, agents.length]);
+  }, [client]);
 
   if (initStatus === "ready" && client) {
     return (
@@ -144,6 +127,7 @@ export function AppShell({
         />
         <SettingsPanel open={settingsOpen} onClose={onCloseSettings} />
         <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+        <OnboardingTour active={!!client} />
       </>
     );
   }
