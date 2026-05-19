@@ -243,8 +243,8 @@ export function Landing() {
                     ],
                     [
                       "commerce",
-                      "x402 micropayments (roadmap)",
-                      "pay-per-call for premium agents",
+                      "x402 USDC/call pricing",
+                      "agents advertise via .well-known/agent-card.json",
                     ],
                     [
                       "execution",

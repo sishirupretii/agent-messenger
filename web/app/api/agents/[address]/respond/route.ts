@@ -910,6 +910,38 @@ export async function GET(
 ) {
   const { address: raw } = await params;
   const agentAddress = raw.toLowerCase();
+
+  // Pull live x402 pricing for this agent so the schema preview
+  // advertises a price (when set). A2A clients honoring the x402
+  // extension can read this and pre-pay before POSTing.
+  const db = serverClient();
+  const { data: agentData } = await db
+    .from("agents")
+    .select("x402_price_usdc, x402_pay_to, x402_currency, x402_chain")
+    .eq("address", agentAddress)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  const x402:
+    | {
+        price: number;
+        currency: string;
+        chain: string;
+        pay_to: string;
+        endpoint: string;
+      }
+    | null =
+    agentData?.x402_price_usdc != null &&
+    Number(agentData.x402_price_usdc) > 0
+      ? {
+          price: Number(agentData.x402_price_usdc),
+          currency: agentData.x402_currency ?? "USDC",
+          chain: agentData.x402_chain ?? "base",
+          pay_to: agentData.x402_pay_to ?? agentAddress,
+          endpoint: `https://www.signaagent.xyz/api/agents/${agentAddress}/respond`,
+        }
+      : null;
+
   return NextResponse.json({
     ok: true,
     endpoint: `POST /api/agents/${agentAddress}/respond`,
@@ -930,9 +962,16 @@ export async function GET(
       agent_did: "gitlawb DID if linked",
       interaction_id: "uuid for replay/rating",
     },
+    // x402 advertising — only present when the agent has set a price.
+    // For v1 this is informational only; server-side payment enforcement
+    // is roadmap. Clients calling via @bankrbot's x402 layer will
+    // auto-handle payment per the bankr skill spec.
+    ...(x402 ? { x402 } : {}),
     notes: [
       "CORS open — call from any origin (gitlawb Playground apps, Discord/TG bots, dashboards).",
-      "No auth required — free, public, signed-when-possible.",
+      x402
+        ? `Paid endpoint: ${x402.price} ${x402.currency} per call on ${x402.chain}. Payment to ${x402.pay_to}. v1 is honor-system — server-side enforcement coming.`
+        : "No auth required — free, public, signed-when-possible.",
       "Routing tree: facts→Bankr+GeckoTerminal | swarm→MiroShark | code→gitlawb | action→Bankr | chat→Groq.",
       "When GROQ_API_KEY is absent the endpoint still works — classification falls back to a lexical rule-set and synthesis falls back to a deterministic template (you'll see [note: ... LLM is offline ...] in the reply).",
     ],

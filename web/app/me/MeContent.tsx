@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Spinner } from "@/components/ui/Spinner";
+import { X402PriceControl } from "@/components/agent/X402PriceControl";
 import { PeerAvatar } from "@/components/ui/Avatar";
 import { shortAddress } from "@/lib/format";
 import { formatUsd, formatPct } from "@/lib/geckoterminal";
@@ -310,22 +311,24 @@ export function MeContent() {
             </div>
             <div className="grid sm:grid-cols-2 gap-2">
               {agents.map((a) => (
-                <Link
+                <div
                   key={a.address}
-                  href={`/agent/${a.address}`}
-                  className="border border-white/10 px-3 py-3 hover:bg-white/[0.03] transition group flex items-start gap-3"
+                  className="border border-white/10 px-3 py-3 flex items-start gap-3"
                 >
                   <PeerAvatar
                     address={a.avatar_seed || a.address}
                     size={32}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-[14px] text-white font-medium truncate">
+                    <Link
+                      href={`/agent/${a.address}`}
+                      className="group flex items-center justify-between gap-1"
+                    >
+                      <span className="text-[14px] text-white font-medium truncate hover:underline underline-offset-4">
                         {a.name}
                       </span>
                       <span className="text-white/30 group-hover:text-white flex-shrink-0 text-[12px]">↗</span>
-                    </div>
+                    </Link>
                     <div className="text-[10px] font-mono text-white/35 truncate">
                       {a.address.slice(0, 10)}…{a.address.slice(-4)}
                     </div>
@@ -334,8 +337,13 @@ export function MeContent() {
                         ● tokenized
                       </div>
                     )}
+                    {/* Wallet-signed x402 price control — owners can charge
+                        USDC per /respond call. */}
+                    <div className="mt-2 pt-2 border-t border-white/[0.05]">
+                      <X402PriceControl agentAddress={a.address} />
+                    </div>
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           </div>

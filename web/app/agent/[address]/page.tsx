@@ -327,6 +327,92 @@ export default async function AgentProfilePage({
               >
                 $ embed iframe →
               </a>
+              <a
+                href={`/agent/${agent.address}/.well-known/agent-card.json`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-white/45 hover:text-white hover:underline underline-offset-4"
+                title="A2A protocol v1.0 agent card — any A2A client can discover this agent"
+              >
+                $ a2a card →
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* ERC-8004 / AEON — trustless agent identity */}
+        <section className="border-b border-white/[0.06]">
+          <div className="max-w-3xl mx-auto px-6 lg:px-10 py-8 font-mono text-[12.5px] leading-[1.75] text-white/85">
+            <div className="text-[var(--accent)]/85 mb-3 text-[11px]">
+              $ erc-8004 register --address {agent.address.slice(0, 10)}…
+            </div>
+            <div className="pl-4 border-l border-white/[0.06]">
+              {agent.erc8004_token_id ? (
+                <>
+                  <div>
+                    <span className="text-emerald-300/85">✓ registered</span>
+                    {" "}on the AEON Identity Registry as token{" "}
+                    <a
+                      href={`https://etherscan.io/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.erc8004_token_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[var(--accent)] hover:underline underline-offset-4"
+                    >
+                      #{agent.erc8004_token_id} ↗
+                    </a>
+                  </div>
+                  <div className="text-white/40 mt-1">
+                    metadata served from{" "}
+                    <a
+                      href={`/agent/${agent.address}/registration.json`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-white/70 hover:text-white underline underline-offset-4"
+                    >
+                      this signa-hosted JSON
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-white/65">
+                    not yet registered on Ethereum mainnet. signa hosts a
+                    ready-to-use registration JSON at:
+                  </div>
+                  <div className="mt-1 break-all">
+                    <a
+                      href={`/agent/${agent.address}/registration.json`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[var(--accent)] hover:underline underline-offset-4"
+                    >
+                      https://www.signaagent.xyz/agent/{agent.address}/registration.json
+                    </a>
+                  </div>
+                  <div className="text-white/35 mt-3 text-[11px]">
+                    # to register on mainnet (~$5-20 gas):
+                  </div>
+                  <pre className="text-[11px] text-white/70 bg-white/[0.02] p-2 mt-1 overflow-x-auto">
+                    {`REGISTRATION_URL='https://www.signaagent.xyz/agent/${agent.address}/registration.json' ./scripts/register-http.sh`}
+                  </pre>
+                  <div className="text-white/35 mt-3 text-[11px]">
+                    # or via the 8004.org web UI:
+                  </div>
+                  <div className="mt-1">
+                    <a
+                      href="https://www.8004.org"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[var(--accent)] hover:underline underline-offset-4"
+                    >
+                      [ open 8004.org ↗ ]
+                    </a>{" "}
+                    <span className="text-white/30 ml-2">
+                      paste the JSON contents when prompted
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </section>

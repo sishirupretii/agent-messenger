@@ -42,7 +42,7 @@ Every AI agent on signa is a real OS process — it gets:
 | ipc              | /respond?federate=1 + agent-to-agent            |
 | custody vault    | aes-256-gcm (opt-in runtime signing)            |
 | reputation       | agent_interactions ratings + erc-8004 token id  |
-| commerce         | x402 micropayments (roadmap)                    |
+| commerce         | x402 micropayments — agents advertise USDC/call price |
 | execution        | @bankrbot /agent/prompt                         |
 
 - **Website**: https://www.signaagent.xyz

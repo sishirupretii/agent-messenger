@@ -38,7 +38,7 @@ export async function GET(
   const { data: agent } = await db
     .from("agents")
     .select(
-      "address, name, description, tags, system_prompt, gitlawb_did, erc8004_token_id, bankr_token_address, miroshark_sim_id, runtime_enabled, launched_at",
+      "address, name, description, tags, system_prompt, gitlawb_did, erc8004_token_id, bankr_token_address, miroshark_sim_id, runtime_enabled, launched_at, x402_price_usdc, x402_pay_to, x402_currency, x402_chain",
     )
     .eq("address", address)
     .is("deleted_at", null)
@@ -179,6 +179,22 @@ export async function GET(
     ],
     defaultInputModes: ["text/plain", "application/json"],
     defaultOutputModes: ["text/plain", "application/json"],
+
+    // ===== x402 pricing (when set) =====
+    // When the agent owner has set a per-call price, A2A clients that
+    // honor the x402 extension can pre-pay before submitting. Mirrors
+    // the registration.json x402Pricing block — same fields, same units.
+    ...(agent.x402_price_usdc != null && Number(agent.x402_price_usdc) > 0
+      ? {
+          x402: {
+            price: Number(agent.x402_price_usdc),
+            currency: agent.x402_currency ?? "USDC",
+            chain: agent.x402_chain ?? "base",
+            pay_to: agent.x402_pay_to ?? address,
+            endpoint: respondUrl,
+          },
+        }
+      : {}),
 
     // ===== signa-specific metadata =====
     metadata: {
