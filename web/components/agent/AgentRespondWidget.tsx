@@ -1,23 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Sparkles, ExternalLink } from "lucide-react";
 
 /**
- * Public-facing "try this agent" widget — embedded on /agent/[address].
+ * Public "try this agent" surface — embedded on /agent/[address].
  *
- * Lets anyone (no wallet, no signin) ask a SIGNA agent a real question and
- * see a real Groq-synthesized reply with cited sources. Hits the same
- * `POST /api/agents/[address]/respond` endpoint that third-party clients
- * use, so this widget IS the demo of the primitive.
- *
- * Why this matters:
- *   - Non-coders can verify the agent actually works (they can see
- *     responses, citations, intent classification, signing status).
- *   - It doubles as the "stage" for the agent — a public square anyone
- *     who lands on a /agent/<addr> URL can interact with.
- *   - Each question persists into `agent_interactions` for future
- *     reputation scoring.
+ * Rendered as a single shell session block. No chip buttons, no icon
+ * decorations, no rounded card containers, no animated "thinking…"
+ * microcopy. Just a `>` prompt + the agent's reply + a fixed-width
+ * field list (intent, sources, signed, latency, interaction_id) like
+ * a real curl trace. The visual language is a unix shell, not a SaaS
+ * playground — so the surface reads as engineering, not a Cursor
+ * template.
  */
 
 type Source = { kind: string; ref: string };
@@ -37,38 +31,17 @@ type RespondJson = {
   message?: string;
 };
 
-const PRESETS: { label: string; prompt: string; intent: string }[] = [
+const PRESETS: { cmd: string; prompt: string }[] = [
   {
-    label: "$USDC price",
-    intent: "facts",
+    cmd: "/facts",
     prompt:
-      "what is the price of $USDC on base? 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "price of $USDC on base 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
   },
-  {
-    label: "build a dashboard",
-    intent: "code",
-    prompt: "build me a small single-html dashboard for base trending tokens",
-  },
-  {
-    label: "simulate a swarm",
-    intent: "swarm",
-    prompt: "simulate a swarm of 1000 wallets buying $AEON over 24h",
-  },
-  {
-    label: "who are you",
-    intent: "chat",
-    prompt: "who are you and what can you do?",
-  },
+  { cmd: "/code", prompt: "build me a single-html dashboard for base trending tokens" },
+  { cmd: "/swarm", prompt: "simulate 1000 wallets buying $AEON over 24h" },
+  { cmd: "/action", prompt: "buy me 10 USDC of $AEON on base" },
+  { cmd: "/chat", prompt: "who built you" },
 ];
-
-const INTENT_COLOR: Record<string, string> = {
-  facts: "text-cyan-300 border-cyan-400/30 bg-cyan-400/[0.04]",
-  code: "text-violet-300 border-violet-400/30 bg-violet-400/[0.04]",
-  swarm: "text-amber-300 border-amber-400/30 bg-amber-400/[0.04]",
-  action: "text-rose-300 border-rose-400/30 bg-rose-400/[0.04]",
-  chat: "text-emerald-300 border-emerald-400/30 bg-emerald-400/[0.04]",
-  error: "text-red-300 border-red-400/30 bg-red-400/[0.04]",
-};
 
 export function AgentRespondWidget({
   address,
@@ -81,6 +54,9 @@ export function AgentRespondWidget({
   const [reply, setReply] = useState<RespondJson | null>(null);
   const [busy, setBusy] = useState(false);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  const [history, setHistory] = useState<
+    Array<{ q: string; r: RespondJson; ms: number }>
+  >([]);
 
   async function ask(promptOverride?: string) {
     const m = (promptOverride ?? message).trim();
@@ -96,15 +72,19 @@ export function AgentRespondWidget({
         body: JSON.stringify({ message: m }),
       });
       const j = (await res.json()) as RespondJson;
+      const ms = Math.round(performance.now() - t0);
       setReply(j);
+      setElapsedMs(ms);
+      setHistory((h) => [{ q: m, r: j, ms }, ...h].slice(0, 5));
     } catch (e) {
-      setReply({
+      const j: RespondJson = {
         ok: false,
         error: "network_error",
         message: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
+      };
+      setReply(j);
       setElapsedMs(Math.round(performance.now() - t0));
+    } finally {
       setBusy(false);
     }
   }
@@ -114,161 +94,165 @@ export function AgentRespondWidget({
     void ask(p.prompt);
   }
 
+  function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void ask();
+    }
+  }
+
+  const shortAddr = `${address.slice(0, 6)}…${address.slice(-4)}`;
+
   return (
     <section className="border-b border-white/[0.06]">
-      <div className="max-w-3xl mx-auto px-6 lg:px-10 py-10">
-        <div className="font-mono text-[11px] text-[var(--accent)] mb-3">
-          $ signa agent respond --address {address.slice(0, 10)}…
+      <div className="max-w-3xl mx-auto px-6 lg:px-10 py-10 font-mono text-[12.5px] leading-[1.7] text-white/85">
+        <div className="text-white/35 mb-2">
+          # public reply primitive · POST /api/agents/{shortAddr}/respond
         </div>
 
-        <div className="border border-white/10 bg-black/30 p-4">
-          <div className="text-white/65 text-[13px] leading-relaxed mb-3">
-            Ask <span className="text-white font-medium">{agentName}</span> a
-            question. Replies are generated by{" "}
-            <span className="font-mono text-white/80">
-              POST /api/agents/{address.slice(0, 8)}…/respond
-            </span>
-            {" "}— a public, no-auth endpoint that routes facts→Bankr+
-            GeckoTerminal, swarm→MiroShark, code→gitlawb Playground,
-            action→Bankr, chat→Groq. Every reply lands in our{" "}
-            <span className="font-mono text-white/80">agent_interactions</span>{" "}
-            table for replay + reputation.
-          </div>
-
-          {/* Quick presets */}
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {PRESETS.map((p) => (
+        {/* Preset bar — bare slash-commands, no chip styling */}
+        <div className="text-white/45 mb-3">
+          <span className="text-white/30">presets:</span>{" "}
+          {PRESETS.map((p, i) => (
+            <span key={p.cmd}>
               <button
-                key={p.label}
                 disabled={busy}
                 onClick={() => onPreset(p)}
-                className="text-[11px] font-mono border border-white/15 text-white/70 hover:text-white hover:bg-white/[0.04] px-2 py-1 rounded-sm transition disabled:opacity-40"
+                className="text-[var(--accent)] hover:underline underline-offset-4 disabled:opacity-40"
               >
-                {p.label}
+                {p.cmd}
               </button>
-            ))}
-          </div>
+              {i < PRESETS.length - 1 && (
+                <span className="text-white/20"> · </span>
+              )}
+            </span>
+          ))}
+        </div>
 
-          {/* Composer */}
+        {/* Composer — prompt-style, not card-style */}
+        <label className="block">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[var(--accent)]">{">"}</span>
+            <span className="text-white/40">ask {agentName}</span>
+          </div>
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder={`ask ${agentName} anything…`}
+            onKeyDown={onKey}
+            placeholder=""
             rows={3}
             maxLength={1500}
             disabled={busy}
-            className="w-full bg-black/40 border border-white/15 text-white text-[14px] p-3 font-mono rounded-sm placeholder:text-white/30 focus:outline-none focus:border-[var(--accent)]/60 resize-y disabled:opacity-50"
+            spellCheck={false}
+            className="block w-full mt-1 bg-transparent border-0 border-l-2 border-white/15 focus:border-[var(--accent)] outline-none pl-3 py-1 resize-y text-white placeholder:text-white/25 disabled:opacity-50"
           />
-          <div className="flex items-center justify-between mt-2">
-            <div className="text-[10px] text-white/35 font-mono">
-              {message.length}/1500 · free · CORS-open · public
-            </div>
-            <button
-              onClick={() => ask()}
-              disabled={busy || !message.trim()}
-              className="bg-[var(--accent)] text-black font-semibold text-[12px] uppercase tracking-wide rounded-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:brightness-110 transition disabled:opacity-40"
-            >
-              {busy ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Sparkles className="size-3" />
-              )}
-              {busy ? "thinking…" : "ask"}
-            </button>
-          </div>
+        </label>
+
+        <div className="mt-2 flex items-center justify-between text-white/35">
+          <span>
+            bytes {message.length}/1500 — public · no auth · cors-open
+          </span>
+          <button
+            onClick={() => ask()}
+            disabled={busy || !message.trim()}
+            className="text-[var(--accent)] hover:underline underline-offset-4 disabled:opacity-30"
+          >
+            {busy ? "[…]" : "[ enter ]"}
+            <span className="text-white/25 ml-2 hidden sm:inline">
+              ⌘/ctrl + return
+            </span>
+          </button>
         </div>
 
-        {/* Reply */}
+        {/* Output — flat shell trace, no card, no chips */}
         {reply && (
-          <div className="mt-4 border border-white/10 bg-black/30 p-4">
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              {reply.intent && (
-                <span
-                  className={`text-[10px] uppercase tracking-wider font-mono border rounded-sm px-1.5 py-0.5 ${INTENT_COLOR[reply.intent] ?? INTENT_COLOR.chat}`}
-                >
-                  intent: {reply.intent}
-                </span>
-              )}
-              {reply.signed === true ? (
-                <span className="text-[10px] uppercase tracking-wider font-mono border border-emerald-400/30 bg-emerald-400/[0.04] text-emerald-300 rounded-sm px-1.5 py-0.5">
-                  ✓ signed by agent
-                </span>
-              ) : reply.ok ? (
-                <span className="text-[10px] uppercase tracking-wider font-mono border border-white/15 text-white/55 rounded-sm px-1.5 py-0.5">
-                  unsigned (non-custodial agent)
-                </span>
-              ) : null}
-              {elapsedMs != null && (
-                <span className="text-[10px] font-mono text-white/35 ml-auto">
-                  {elapsedMs}ms
-                </span>
-              )}
-            </div>
-
-            {reply.ok && reply.response ? (
-              <pre className="text-[13px] text-white whitespace-pre-wrap leading-relaxed font-sans">
-                {reply.response}
-              </pre>
-            ) : (
-              <pre className="text-[12px] text-red-300 whitespace-pre-wrap font-mono">
-                {reply.error ?? "error"}: {reply.message ?? "(no detail)"}
-              </pre>
+          <div className="mt-6 pt-4 border-t border-white/[0.08]">
+            <FieldRow label="intent" value={reply.intent ?? "—"} />
+            <FieldRow
+              label="signed"
+              value={
+                reply.signed
+                  ? "true (agent wallet)"
+                  : "false (non-custodial)"
+              }
+            />
+            {elapsedMs != null && (
+              <FieldRow label="latency" value={`${elapsedMs}ms`} />
             )}
-
-            {/* Sources */}
-            {reply.sources && reply.sources.length > 0 && (
-              <div className="mt-4 pt-3 border-t border-white/[0.06]">
-                <div className="text-[10px] uppercase tracking-wider text-white/35 mb-1.5 font-mono">
-                  sources cited
-                </div>
-                <ul className="space-y-1">
-                  {reply.sources.map((s, i) => (
-                    <li
-                      key={i}
-                      className="text-[11px] font-mono text-white/70 flex items-center gap-2"
-                    >
-                      <span className="text-[var(--accent)]">{s.kind}</span>
-                      <span className="text-white/40">·</span>
-                      <span className="text-white/65 truncate">{s.ref}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Verifiable trail */}
             {reply.interaction_id && (
-              <div className="mt-3 text-[10px] font-mono text-white/35">
-                interaction_id: {reply.interaction_id}
-              </div>
+              <FieldRow label="id" value={reply.interaction_id} mono />
+            )}
+            {reply.sources && reply.sources.length > 0 && (
+              <FieldRow
+                label="sources"
+                value={reply.sources
+                  .map((s) => `${s.kind}:${s.ref}`)
+                  .join("  ")}
+                mono
+              />
             )}
 
-            {/* Notice */}
-            {reply.notice && (
-              <div className="mt-3 text-[10px] font-mono text-white/45 italic">
-                {reply.notice}
-              </div>
-            )}
-
-            {/* Try it yourself link */}
-            <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center gap-2 flex-wrap">
-              <a
-                href={`/api/agents/${address.toLowerCase()}/respond`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-mono text-white/55 hover:text-white inline-flex items-center gap-1 underline underline-offset-4"
-              >
-                view endpoint schema
-                <ExternalLink className="size-2.5" />
-              </a>
-              <span className="text-white/25 text-[11px]">·</span>
-              <code className="text-[10px] font-mono text-white/50 bg-white/[0.03] px-1.5 py-0.5 rounded-sm">
-                curl -X POST signaagent.xyz/api/agents/{address.slice(0, 6)}…/respond
-              </code>
+            <div className="mt-4 pt-3 border-t border-white/[0.04]">
+              {reply.ok && reply.response ? (
+                <pre className="whitespace-pre-wrap text-white">
+                  {reply.response}
+                </pre>
+              ) : (
+                <pre className="whitespace-pre-wrap text-red-300">
+                  {reply.error ?? "error"}
+                  {reply.message ? `: ${reply.message}` : ""}
+                </pre>
+              )}
             </div>
+
+            {reply.notice && (
+              <div className="mt-3 text-white/35">// {reply.notice}</div>
+            )}
+          </div>
+        )}
+
+        {/* History — flat list, no cards */}
+        {history.length > 1 && (
+          <div className="mt-8 pt-4 border-t border-white/[0.06]">
+            <div className="text-white/35 mb-2"># history</div>
+            <ol className="space-y-1">
+              {history.slice(1).map((h, i) => (
+                <li
+                  key={i}
+                  className="grid grid-cols-[80px_1fr_auto] gap-3 text-white/55"
+                >
+                  <span className="text-[var(--accent)]/70">
+                    {h.r.intent ?? "?"}
+                  </span>
+                  <span className="truncate">{h.q}</span>
+                  <span className="text-white/30">{h.ms}ms</span>
+                </li>
+              ))}
+            </ol>
           </div>
         )}
       </div>
     </section>
+  );
+}
+
+function FieldRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[80px_1fr] gap-3">
+      <span className="text-white/40">{label}</span>
+      <span
+        className={mono ? "text-white/80 break-all" : "text-white"}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
