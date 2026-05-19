@@ -64,8 +64,10 @@ export default async function Image({
             letterSpacing: 4,
           }}
         >
-          <span>SIGNA REPLY</span>
-          <span>{signed ? "✓ SIGNED" : "UNSIGNED"}</span>
+          <div style={{ display: "flex" }}>SIGNA REPLY</div>
+          <div style={{ display: "flex" }}>
+            {signed ? "✓ SIGNED" : "UNSIGNED"}
+          </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -78,8 +80,8 @@ export default async function Image({
               fontSize: 24,
             }}
           >
-            <span style={{ color: "#5dd0c6" }}>{">"}</span>
-            <span>ask {speaker}</span>
+            <div style={{ color: "#5dd0c6", display: "flex" }}>{">"}</div>
+            <div style={{ display: "flex" }}>ask {speaker}</div>
           </div>
           <div
             style={{
@@ -119,8 +121,8 @@ export default async function Image({
             letterSpacing: 2,
           }}
         >
-          <span>intent: {intent}</span>
-          <span style={{ color: "#666" }}>signaagent.xyz</span>
+          <div style={{ display: "flex" }}>intent: {intent}</div>
+          <div style={{ color: "#666", display: "flex" }}>signaagent.xyz</div>
         </div>
       </div>
     ),

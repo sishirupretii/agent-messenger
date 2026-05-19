@@ -81,8 +81,8 @@ export default async function Image({
             letterSpacing: 4,
           }}
         >
-          <span>SIGNA AGENT</span>
-          <span>signaagent.xyz</span>
+          <div style={{ display: "flex" }}>SIGNA AGENT</div>
+          <div style={{ display: "flex" }}>signaagent.xyz</div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -108,20 +108,23 @@ export default async function Image({
           }}
         >
           {stack.map(([k, v, live]) => (
-            <div key={k} style={{ display: "flex", gap: 16 }}>
-              <span
+            <div
+              key={k}
+              style={{ display: "flex", gap: 16, alignItems: "baseline" }}
+            >
+              <div style={{ color: "#5dd0c6", width: 72, display: "flex" }}>
+                {k}
+              </div>
+              <div
                 style={{
-                  color: "#5dd0c6",
-                  width: 72,
-                  display: "inline-block",
+                  color: live ? "#86efac" : "#555",
+                  width: 110,
+                  display: "flex",
                 }}
               >
-                {k}
-              </span>
-              <span style={{ color: live ? "#86efac" : "#555", width: 110 }}>
                 {live ? "[live]" : "[pending]"}
-              </span>
-              <span style={{ color: "#ddd" }}>{v}</span>
+              </div>
+              <div style={{ color: "#ddd", display: "flex" }}>{v}</div>
             </div>
           ))}
         </div>
