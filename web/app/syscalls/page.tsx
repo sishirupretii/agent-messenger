@@ -45,6 +45,13 @@ const SYSCALLS: Record<string, Syscall[]> = {
       brief:
         "schema preview + live specialist count per intent + routing tree",
     },
+    {
+      method: "GET",
+      path: "/api/openapi.json",
+      auth: "none",
+      brief:
+        "OpenAPI 3.1 spec for every public endpoint — feed to Postman, codegen, agent platforms",
+    },
   ],
   agents: [
     {
