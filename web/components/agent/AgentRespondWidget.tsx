@@ -180,8 +180,31 @@ export function AgentRespondWidget({
               </pre>
             )}
 
+            {reply.ok && reply.interaction_id && (
+              <div className="mt-4 flex items-center gap-4 flex-wrap">
+                <a
+                  href={`/i/${reply.interaction_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[var(--accent)] hover:underline underline-offset-4"
+                >
+                  [ permalink ]
+                </a>
+                <a
+                  href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                    `${agentName} answered me on signa — wallet-verifiable.\n\nhttps://www.signaagent.xyz/i/${reply.interaction_id}`,
+                  )}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-white/55 hover:text-white"
+                >
+                  [ share on x ]
+                </a>
+              </div>
+            )}
+
             {reply.ok && (
-              <details className="mt-4 group">
+              <details className="mt-3 group">
                 <summary className="text-white/30 hover:text-white/55 cursor-pointer list-none select-none">
                   <span className="group-open:hidden">[ + trace ]</span>
                   <span className="hidden group-open:inline">[ − trace ]</span>

@@ -85,13 +85,14 @@ const MAX_MESSAGE_LEN = 1500;
 type Intent = "facts" | "swarm" | "code" | "chat" | "action";
 
 type Source = {
-  kind:
-    | "geckoterminal"
-    | "bankr_agent"
-    | "miroshark"
-    | "gitlawb"
-    | "groq"
-    | "system";
+  /**
+   * Free-form so federation can wrap nested partner sources like
+   * `fwd:geckoterminal` without us having to enumerate every cross
+   * product up-front. The common values are still:
+   *   geckoterminal · bankr_agent · miroshark · gitlawb · groq ·
+   *   system · federation · fwd:<inner>
+   */
+  kind: string;
   ref: string;
 };
 
@@ -560,6 +561,48 @@ function hash32(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 32);
 }
 
+/**
+ * Pick a specialist agent to forward an unfamiliar intent to.
+ *
+ * Heuristic: look for any non-deleted agent whose tags array contains
+ * a token matching the intent (e.g. an agent tagged `defi` for an
+ * `action` query, or tagged `simulation` for `swarm`). We exclude
+ * the agent the caller asked directly so we don't infinite-loop.
+ *
+ * Returns null when there's no obvious specialist — then federation
+ * silently no-ops and we fall back to the requesting agent's own
+ * tool output.
+ */
+async function pickSpecialist(
+  db: ReturnType<typeof serverClient>,
+  intent: Intent,
+  exclude: string,
+): Promise<{ address: string; name: string } | null> {
+  const tagHints: Record<Intent, string[]> = {
+    facts: ["facts", "markets", "defi", "trading", "bankr"],
+    swarm: ["swarm", "simulation", "miroshark", "monte-carlo"],
+    code: ["code", "build", "gitlawb", "playground", "dev"],
+    action: ["trade", "trading", "defi", "execution", "bankr"],
+    chat: ["chat", "companion"],
+  };
+  const hints = tagHints[intent];
+  if (!hints || hints.length === 0) return null;
+
+  const { data } = await db
+    .from("agents")
+    .select("address, name, tags")
+    .neq("address", exclude)
+    .is("deleted_at", null)
+    .overlaps("tags", hints)
+    .limit(5);
+
+  if (!data || data.length === 0) return null;
+
+  // Prefer launched/verified agents over fresh submissions — but in
+  // v1 we don't have a quality score, so just pick the first one.
+  return { address: data[0].address, name: data[0].name };
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ address: string }> },
@@ -570,13 +613,19 @@ export async function POST(
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
   }
 
-  let body: { message?: string; from?: string };
+  let body: { message?: string; from?: string; federate?: boolean };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "bad_json" }, { status: 400 });
   }
   const message = (body.message ?? "").trim();
+  // Federate flag — opt-in agent-to-agent forward. Off by default
+  // because it adds latency (extra fetch). Callers that want the
+  // composed answer can pass federate:true OR ?federate=1.
+  const federate =
+    body.federate === true ||
+    req.nextUrl.searchParams.get("federate") === "1";
   const from = body.from
     ? /^0x[a-fA-F0-9]{40}$/.test(body.from)
       ? body.from.toLowerCase()
@@ -662,6 +711,53 @@ export async function POST(
   } catch (e) {
     toolCtx = `TOOL ERROR: ${e instanceof Error ? e.message : String(e)}`;
     sources = [{ kind: "system", ref: "tool_error" }];
+  }
+
+  // 2.5) Federation — if the caller opted in AND this agent's tags
+  // don't cover the intent, look up a specialist agent and consult
+  // them. Specialist's reply gets folded into our toolCtx so the
+  // synthesized voice is still our agent's. Sources cite both.
+  if (federate) {
+    try {
+      const specialist = await pickSpecialist(db, intent, agentAddress);
+      if (specialist) {
+        const proto =
+          req.nextUrl.protocol || (req.nextUrl.host.includes("localhost") ? "http:" : "https:");
+        const host = req.nextUrl.host;
+        const url = `${proto}//${host}/api/agents/${specialist.address}/respond`;
+        const fed = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message, from: agentAddress }),
+        });
+        if (fed.ok) {
+          const fj = (await fed.json()) as {
+            ok: boolean;
+            response?: string;
+            sources?: Source[];
+            interaction_id?: string;
+          };
+          if (fj.ok && fj.response) {
+            toolCtx +=
+              `\n\nFEDERATED SPECIALIST CONTEXT (from ${specialist.name}):\n` +
+              fj.response;
+            sources.push({
+              kind: "federation",
+              ref: `${specialist.name}:${fj.interaction_id ?? specialist.address}`,
+            });
+            for (const s of fj.sources ?? []) {
+              sources.push({ kind: `fwd:${s.kind}`, ref: s.ref });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // federation is best-effort
+      console.error(
+        "[respond] federation failed:",
+        e instanceof Error ? e.message : e,
+      );
+    }
   }
 
   // 3) Synthesize
