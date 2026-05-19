@@ -455,51 +455,214 @@ export function Landing() {
 }
 
 /* ============================================================
-   ANIMATED MESH BACKGROUND
-   Drifting radial gradient blobs behind the hero. Pure CSS keyframes
-   on transform — no compositor thrash. Two blobs at different speeds
-   create a subtle parallax feel.
+   3D CONSTELLATION
+   Real CSS-3D rotation of partner badges around a central axis. Each
+   badge is positioned in 3D space via translate3d on a sphere/ring,
+   container spins continuously, parent has perspective. A subtle
+   radial gradient sits behind it for depth. Pure GPU-composited
+   transforms — no three.js, no canvas, no extra deps.
    ============================================================ */
+
+type Partner = { name: string; tone: string };
+
+const ORBIT: Partner[] = [
+  { name: "@bankrbot", tone: "from-violet-400/50 to-violet-500/20" },
+  { name: "@gitlawb", tone: "from-emerald-400/50 to-emerald-500/20" },
+  { name: "@miroshark_", tone: "from-cyan-400/50 to-cyan-500/20" },
+  { name: "AEON", tone: "from-amber-400/50 to-amber-500/20" },
+  { name: "Base", tone: "from-blue-400/50 to-blue-500/20" },
+  { name: "XMTP", tone: "from-rose-400/50 to-rose-500/20" },
+  { name: "Groq", tone: "from-orange-400/50 to-orange-500/20" },
+  { name: "ERC-8004", tone: "from-fuchsia-400/50 to-fuchsia-500/20" },
+];
+
 function AnimatedMesh() {
   return (
     <div aria-hidden className="absolute inset-0 pointer-events-none">
-      {/* primary blob — top-left, brand accent */}
+      {/* primary brand glow — kept from prior bg, dimmed */}
       <motion.div
-        animate={{
-          x: [0, 60, -20, 0],
-          y: [0, -30, 40, 0],
-        }}
-        transition={{
-          duration: 28,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="absolute top-[-20%] left-[-10%] w-[60vw] h-[60vw] opacity-50 rounded-full blur-[120px]"
+        animate={{ x: [0, 60, -20, 0], y: [0, -30, 40, 0] }}
+        transition={{ duration: 28, repeat: Infinity, ease: "easeInOut" }}
+        className="absolute top-[-20%] left-[-10%] w-[55vw] h-[55vw] opacity-35 rounded-full blur-[140px]"
         style={{
           background:
-            "radial-gradient(circle, color-mix(in oklab, var(--accent) 60%, transparent), transparent 70%)",
+            "radial-gradient(circle, color-mix(in oklab, var(--accent) 70%, transparent), transparent 70%)",
         }}
       />
-      {/* secondary blob — bottom-right, cooler tint */}
+      {/* cool violet glow — depth */}
       <motion.div
-        animate={{
-          x: [0, -50, 30, 0],
-          y: [0, 50, -20, 0],
-        }}
-        transition={{
-          duration: 36,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
-        className="absolute bottom-[-30%] right-[-15%] w-[60vw] h-[60vw] opacity-35 rounded-full blur-[140px]"
+        animate={{ x: [0, -50, 30, 0], y: [0, 50, -20, 0] }}
+        transition={{ duration: 36, repeat: Infinity, ease: "easeInOut" }}
+        className="absolute bottom-[-30%] right-[-15%] w-[55vw] h-[55vw] opacity-25 rounded-full blur-[160px]"
         style={{
           background:
-            "radial-gradient(circle, rgba(139,92,246,0.5), transparent 70%)",
+            "radial-gradient(circle, rgba(139,92,246,0.55), transparent 70%)",
         }}
       />
-      {/* faint top fade to keep header legible */}
-      <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/40 to-transparent" />
+
+      {/* 3D ORBIT */}
+      <Orbit3D />
+
+      {/* top fade so the header bar stays legible */}
+      <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 via-black/20 to-transparent" />
+      {/* bottom fade so the hero copy reads cleanly */}
+      <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/40 to-transparent" />
     </div>
+  );
+}
+
+/**
+ * The 3D constellation. Container holds a slowly-rotating ring of
+ * partner badges. Each badge sits on the ring at a different angle
+ * with a slight y-offset (so it reads as a 3D sphere, not a flat
+ * carousel). The whole assembly is tilted and spins on the Y axis.
+ *
+ * Math: for N partners at angle θ = i * (2π / N):
+ *   x = R * cos(θ)
+ *   y = R_vertical * sin(i * π / N) - drift
+ *   z = R * sin(θ)
+ *
+ * CSS:
+ *   parent .scene has perspective: 1200px
+ *   .orbit has transform-style: preserve-3d + animate rotateY
+ *   each .star has translate3d(x, y, z) + rotateY(-θ) to face camera
+ */
+function Orbit3D() {
+  return (
+    <div
+      className="absolute inset-0 flex items-center justify-center"
+      style={{ perspective: "1400px" }}
+    >
+      <motion.div
+        animate={{ rotateY: 360 }}
+        transition={{ duration: 38, repeat: Infinity, ease: "linear" }}
+        className="relative"
+        style={{
+          width: 600,
+          height: 600,
+          transformStyle: "preserve-3d",
+          // tilt the whole sphere so we see the top + bottom orbits too
+          transform: "rotateX(8deg) rotateZ(-2deg)",
+        }}
+      >
+        {/* faint orbital ring (helps readability) */}
+        <div
+          aria-hidden
+          className="absolute inset-0 rounded-full border border-white/[0.04]"
+          style={{
+            transform: "rotateX(70deg)",
+            transformStyle: "preserve-3d",
+          }}
+        />
+
+        {ORBIT.map((p, i) => {
+          const N = ORBIT.length;
+          const theta = (i / N) * Math.PI * 2;
+          const R = 260;
+          const x = Math.cos(theta) * R;
+          const z = Math.sin(theta) * R;
+          // sinusoidal y so they form a wave around the equator
+          const y = Math.sin(i * (Math.PI * 2) * 0.35) * 70;
+          return (
+            <PartnerStar
+              key={p.name}
+              partner={p}
+              x={x}
+              y={y}
+              z={z}
+              thetaDeg={(theta * 180) / Math.PI}
+              bobDelay={i * 0.35}
+            />
+          );
+        })}
+
+        {/* center node — "SIGNA" pulse */}
+        <div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ transform: "translate3d(-50%, -50%, 0)" }}
+        >
+          <CenterNode />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function PartnerStar({
+  partner,
+  x,
+  y,
+  z,
+  thetaDeg,
+  bobDelay,
+}: {
+  partner: Partner;
+  x: number;
+  y: number;
+  z: number;
+  thetaDeg: number;
+  bobDelay: number;
+}) {
+  return (
+    <motion.div
+      // bob each star independently for life
+      animate={{
+        y: [y, y - 14, y, y + 14, y],
+      }}
+      transition={{
+        duration: 7 + (bobDelay % 3),
+        delay: bobDelay,
+        repeat: Infinity,
+        ease: "easeInOut",
+      }}
+      className="absolute top-1/2 left-1/2"
+      style={{
+        // base position; the orbit spins us via parent rotateY.
+        transform: `translate3d(${x}px, ${y}px, ${z}px) rotateY(${-thetaDeg}deg)`,
+        transformStyle: "preserve-3d",
+      }}
+    >
+      <div
+        className={
+          "px-3 py-1.5 rounded-full border border-white/[0.12] bg-gradient-to-br " +
+          partner.tone +
+          " backdrop-blur-sm shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
+        }
+        style={{
+          // counter-translate y back to the base so the bob is relative
+          transform: `translate3d(-50%, calc(-50% - ${y}px), 0)`,
+        }}
+      >
+        <span className="text-[12px] font-medium text-white/90 whitespace-nowrap font-mono">
+          {partner.name}
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+
+function CenterNode() {
+  return (
+    <motion.div
+      animate={{
+        scale: [1, 1.06, 1],
+        boxShadow: [
+          "0 0 0 0 rgba(93, 208, 198, 0.4)",
+          "0 0 0 30px rgba(93, 208, 198, 0)",
+          "0 0 0 0 rgba(93, 208, 198, 0)",
+        ],
+      }}
+      transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+      className="size-16 rounded-full flex items-center justify-center border border-white/15"
+      style={{
+        background:
+          "radial-gradient(circle, color-mix(in oklab, var(--accent) 40%, transparent), color-mix(in oklab, var(--accent) 10%, transparent))",
+      }}
+    >
+      <span className="font-display font-medium text-[14px] text-white tracking-[0.12em]">
+        SIGNA
+      </span>
+    </motion.div>
   );
 }
 
