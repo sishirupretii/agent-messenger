@@ -164,49 +164,51 @@ export function AgentRespondWidget({
           </button>
         </div>
 
-        {/* Output — flat shell trace, no card, no chips */}
+        {/* Output — just the reply. Engineering trace is hidden behind
+            a tiny inline toggle so devs can still verify but chat readers
+            aren't drowning in metadata. */}
         {reply && (
           <div className="mt-6 pt-4 border-t border-white/[0.08]">
-            <FieldRow label="intent" value={reply.intent ?? "—"} />
-            <FieldRow
-              label="signed"
-              value={
-                reply.signed
-                  ? "true (agent wallet)"
-                  : "false (non-custodial)"
-              }
-            />
-            {elapsedMs != null && (
-              <FieldRow label="latency" value={`${elapsedMs}ms`} />
-            )}
-            {reply.interaction_id && (
-              <FieldRow label="id" value={reply.interaction_id} mono />
-            )}
-            {reply.sources && reply.sources.length > 0 && (
-              <FieldRow
-                label="sources"
-                value={reply.sources
-                  .map((s) => `${s.kind}:${s.ref}`)
-                  .join("  ")}
-                mono
-              />
+            {reply.ok && reply.response ? (
+              <pre className="whitespace-pre-wrap text-white">
+                {reply.response}
+              </pre>
+            ) : (
+              <pre className="whitespace-pre-wrap text-red-300">
+                {reply.error ?? "error"}
+                {reply.message ? `: ${reply.message}` : ""}
+              </pre>
             )}
 
-            <div className="mt-4 pt-3 border-t border-white/[0.04]">
-              {reply.ok && reply.response ? (
-                <pre className="whitespace-pre-wrap text-white">
-                  {reply.response}
-                </pre>
-              ) : (
-                <pre className="whitespace-pre-wrap text-red-300">
-                  {reply.error ?? "error"}
-                  {reply.message ? `: ${reply.message}` : ""}
-                </pre>
-              )}
-            </div>
-
-            {reply.notice && (
-              <div className="mt-3 text-white/35">// {reply.notice}</div>
+            {reply.ok && (
+              <details className="mt-4 group">
+                <summary className="text-white/30 hover:text-white/55 cursor-pointer list-none select-none">
+                  <span className="group-open:hidden">[ + trace ]</span>
+                  <span className="hidden group-open:inline">[ − trace ]</span>
+                </summary>
+                <div className="mt-2 pl-3 border-l border-white/[0.06] space-y-0.5 text-white/55">
+                  <FieldRow label="intent" value={reply.intent ?? "—"} />
+                  {elapsedMs != null && (
+                    <FieldRow label="latency" value={`${elapsedMs}ms`} />
+                  )}
+                  {reply.sources && reply.sources.length > 0 && (
+                    <FieldRow
+                      label="sources"
+                      value={reply.sources
+                        .map((s) => `${s.kind}:${s.ref}`)
+                        .join("  ")}
+                      mono
+                    />
+                  )}
+                  <FieldRow
+                    label="signed"
+                    value={reply.signed ? "true" : "false"}
+                  />
+                  {reply.interaction_id && (
+                    <FieldRow label="id" value={reply.interaction_id} mono />
+                  )}
+                </div>
+              </details>
             )}
           </div>
         )}
