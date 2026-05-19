@@ -12,6 +12,7 @@ import { HolderBadges } from "@/components/ui/HolderBadges";
 import { shortAddress } from "@/lib/format";
 import { headers } from "next/headers";
 import { getHolderStatus } from "@/lib/holder-status";
+import { AgentRespondWidget } from "@/components/agent/AgentRespondWidget";
 
 export const dynamic = "force-dynamic";
 
@@ -313,6 +314,8 @@ export default async function AgentProfilePage({
             </div>
           </div>
         </section>
+
+        <AgentRespondWidget address={agent.address} agentName={agent.name} />
 
         {agent.system_prompt && (
           <section className="border-b border-white/[0.06]">
