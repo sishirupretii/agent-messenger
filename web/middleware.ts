@@ -62,5 +62,6 @@ export const config = {
     "/api/interactions/:path*",
     "/api/gateway",
     "/api/gateway/:path*",
+    "/api/openapi.json",
   ],
 };
