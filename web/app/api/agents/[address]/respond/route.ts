@@ -391,9 +391,7 @@ async function runAction(
     };
   }
   try {
-    const apiKey = (await import("@/lib/key-vault")).decryptOpaque(
-      agent.bankr_api_key_encrypted,
-    );
+    const apiKey = decryptOpaque(agent.bankr_api_key_encrypted);
     // Use Bankr's dry-run-ish behavior: we submit the prompt but DO NOT
     // poll to completion here — the response endpoint is supposed to be
     // fast (<2s). Caller is told the jobId so they can poll independently.
@@ -431,15 +429,43 @@ async function runAction(
   }
 }
 
+/**
+ * Deterministic templated reply for when Groq is offline. The endpoint
+ * still emits useful, structured output so callers don't get a 503 —
+ * just unflavored compared to the LLM-synthesized version.
+ */
+function templatedReply(args: {
+  agent: AgentRow;
+  intent: Intent;
+  message: string;
+  context: string;
+}): string {
+  const { agent, intent, context } = args;
+  const head = `${agent.name} · ${intent}`;
+  // The tool-context blocks are already structured human-readable lines —
+  // we strip the leading "X CONTEXT:" header and pass through verbatim.
+  const body = context
+    .replace(/^[A-Z ]+CONTEXT[^\n]*\n?/m, "")
+    .trim()
+    .slice(0, 480);
+  const banner =
+    "[note: this reply is templated — the synthesizer LLM is offline on this deployment]";
+  return `${head}\n${body || "(no context)"}\n${banner}`;
+}
+
 async function synthesize(args: {
-  client: Groq;
+  client: Groq | null;
   agent: AgentRow;
   intent: Intent;
   message: string;
   context: string;
   from: string | null;
 }): Promise<string> {
-  const { client, agent, intent, message, context, from } = args;
+  if (!args.client) {
+    return templatedReply(args);
+  }
+  const client = args.client;
+  const { agent, intent, message, context, from } = args;
   const agentVoice =
     agent.system_prompt?.trim() ||
     `You are ${agent.name}. Description: ${agent.description}. Tags: ${(agent.tags ?? []).join(", ")}.`;
@@ -570,18 +596,15 @@ export async function POST(
     bankr_api_key_encrypted: launcherBankrKey,
   };
 
+  // Groq is optional — when missing, classification falls back to the
+  // lexical pre-classifier and synthesis falls back to a deterministic
+  // template. The endpoint never hard-fails because of a missing API key.
   const groqKey = process.env.GROQ_API_KEY;
-  if (!groqKey) {
-    return NextResponse.json(
-      { error: "groq_not_configured", message: "GROQ_API_KEY not set" },
-      { status: 503 },
-    );
-  }
-  const groq = new Groq({ apiKey: groqKey });
+  const groq = groqKey ? new Groq({ apiKey: groqKey }) : null;
 
-  // 1) Classify
+  // 1) Classify — LLM-refined if available, lexical-only otherwise.
   const lexHint = classify(message);
-  const intent = await llmClassify(groq, message, lexHint);
+  const intent = groq ? await llmClassify(groq, message, lexHint) : lexHint;
 
   // 2) Route to tool
   let toolCtx = "";
@@ -747,6 +770,7 @@ export async function GET(
       "CORS open — call from any origin (gitlawb Playground apps, Discord/TG bots, dashboards).",
       "No auth required — free, public, signed-when-possible.",
       "Routing tree: facts→Bankr+GeckoTerminal | swarm→MiroShark | code→gitlawb | action→Bankr | chat→Groq.",
+      "When GROQ_API_KEY is absent the endpoint still works — classification falls back to a lexical rule-set and synthesis falls back to a deterministic template (you'll see [note: ... LLM is offline ...] in the reply).",
     ],
   });
 }
