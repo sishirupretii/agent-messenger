@@ -3,6 +3,7 @@ import { serverClient } from "@/lib/supabase";
 import {
   classifyIntent,
   pickGatewaySpecialist,
+  pickAnyAgent,
   GATEWAY_LIMITS,
   type GatewayIntent,
 } from "@/lib/gateway";
@@ -131,17 +132,26 @@ export async function POST(req: NextRequest) {
 
   // ---------- pick specialist ----------
   const db = serverClient();
-  const specialist = await pickGatewaySpecialist(db, intent, from ? [from] : []);
+  let specialist = await pickGatewaySpecialist(db, intent, from ? [from] : []);
+
+  // Fallback: when no agent on the network is tagged for this intent,
+  // pick the highest-rated launched agent regardless of tags. The
+  // chosen agent still classifies + routes the prompt correctly inside
+  // its own /respond — we just hand off discovery.
+  if (!specialist) {
+    specialist = await pickAnyAgent(db, from ? [from] : []);
+  }
 
   if (!specialist) {
-    // No specialist exists yet for this intent. Honest fallback —
-    // don't pretend we have an answer.
+    // Network is empty (no launched agents at all). Honest 503 — never
+    // invent an answer.
     return NextResponse.json(
       {
         ok: false,
-        error: "no_specialist_available",
+        error: "no_agents_on_network",
         intent,
-        message: `No agent on signa is currently tagged for the "${intent}" intent. Launch one at /launch-agent or try a different prompt.`,
+        message:
+          "No launched agents on signa yet. Spawn the first one at /launch-agent.",
         gateway: {
           classified_intent: intent,
           routed_to: null,
@@ -230,6 +240,7 @@ export async function POST(req: NextRequest) {
         name: specialist.name,
         net_rating: specialist.net_rating,
         custodial: specialist.runtime_enabled,
+        fallback: !!specialist.fallback,
       },
       elapsed_ms: Date.now() - startedAt,
       permalink: fwd.interaction_id

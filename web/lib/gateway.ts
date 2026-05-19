@@ -106,6 +106,10 @@ export type SpecialistCandidate = {
   tags: string[];
   runtime_enabled: boolean;
   net_rating: number;
+  /** true when we couldn't tag-match for the intent and fell back to the
+   * highest-rated agent on the network regardless of tags. Reported in
+   * the gateway response so callers see the routing decision honestly. */
+  fallback?: boolean;
 };
 
 /**
@@ -204,6 +208,81 @@ export async function pickGatewaySpecialist(
   });
 
   return candidates[0];
+}
+
+/**
+ * Graceful fallback when no agent's tags overlap the intent's hint set.
+ * Picks the highest-rated launched agent on the network regardless of
+ * tags. This keeps the gateway answering for every prompt even on day-1
+ * networks where most agents aren't yet richly tagged.
+ *
+ * Returned candidate is marked { fallback: true } so the caller's
+ * `gateway` attribution block reflects the looser routing decision.
+ */
+export async function pickAnyAgent(
+  db: SupabaseClient,
+  exclude: string[] = [],
+): Promise<SpecialistCandidate | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let query: any = db
+    .from("agents")
+    .select("address, name, tags, runtime_enabled")
+    .is("deleted_at", null)
+    .not("launched_at", "is", null)
+    .limit(25);
+
+  const lowered = exclude.map((a) => a.toLowerCase()).filter(Boolean);
+  if (lowered.length === 1) {
+    query = query.neq("address", lowered[0]);
+  } else if (lowered.length > 1) {
+    query = query.not("address", "in", `(${lowered.join(",")})`);
+  }
+
+  const { data } = (await query) as {
+    data:
+      | Array<{
+          address: string;
+          name: string;
+          tags: string[] | null;
+          runtime_enabled: boolean | null;
+        }>
+      | null;
+  };
+  if (!data || data.length === 0) return null;
+
+  const addresses = data.map((a) => a.address);
+  const { data: ratingsRows } = await db
+    .from("agent_interactions")
+    .select("agent_address, rating")
+    .in("agent_address", addresses)
+    .not("rating", "is", null);
+
+  const netRatingByAddr = new Map<string, number>();
+  for (const row of ratingsRows ?? []) {
+    const k = (row.agent_address ?? "").toLowerCase();
+    if (!k) continue;
+    netRatingByAddr.set(k, (netRatingByAddr.get(k) ?? 0) + (Number(row.rating) || 0));
+  }
+
+  const ranked: SpecialistCandidate[] = data
+    .map((a) => ({
+      address: a.address,
+      name: a.name,
+      tags: (a.tags as string[] | null) ?? [],
+      runtime_enabled: !!a.runtime_enabled,
+      net_rating: netRatingByAddr.get(a.address.toLowerCase()) ?? 0,
+      fallback: true,
+    }))
+    .sort((x, y) => {
+      if (y.net_rating !== x.net_rating) return y.net_rating - x.net_rating;
+      return x.runtime_enabled === y.runtime_enabled
+        ? 0
+        : x.runtime_enabled
+          ? -1
+          : 1;
+    });
+
+  return ranked[0] ?? null;
 }
 
 /**
