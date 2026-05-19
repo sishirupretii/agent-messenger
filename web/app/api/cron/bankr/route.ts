@@ -9,6 +9,7 @@ import {
 import { base } from "viem/chains";
 import { botPost } from "@/lib/signa-bots";
 import { readState, writeState } from "@/lib/cron-state";
+import { authorizeBearer } from "@/lib/secret-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,13 +47,9 @@ const MAX_LOOKBACK = 5000n;
 
 type State = { lastBlock: string };
 
+// Constant-time CRON_SECRET check (timing-safe). Fail-closed when env unset.
 function authorize(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const auth = req.headers.get("authorization") ?? "";
-  if (auth === `Bearer ${secret}`) return true;
-  if (req.nextUrl.searchParams.get("key") === secret) return true;
-  return false;
+  return authorizeBearer(req, "CRON_SECRET");
 }
 
 function getThreshold(): bigint {

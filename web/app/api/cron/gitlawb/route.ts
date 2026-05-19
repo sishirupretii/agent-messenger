@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { botPost } from "@/lib/signa-bots";
 import { readState, writeState } from "@/lib/cron-state";
+import { authorizeBearer } from "@/lib/secret-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,15 +65,12 @@ async function fetchFirstPageDids(): Promise<string[]> {
   return ordered.slice(0, 60); // first-page sized window
 }
 
+// Constant-time CRON_SECRET check. Vercel cron sends
+// `Authorization: Bearer <CRON_SECRET>`; manual runs may pass ?key=…
+// instead. Both flow through authorizeBearer for timing-safe compare,
+// fail-closed when env unset.
 function authorize(req: NextRequest): boolean {
-  // Vercel cron sends `Authorization: Bearer <CRON_SECRET>` when one is
-  // configured. We also accept the same secret via ?key= for manual runs.
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true; // unguarded in dev
-  const auth = req.headers.get("authorization") ?? "";
-  if (auth === `Bearer ${secret}`) return true;
-  if (req.nextUrl.searchParams.get("key") === secret) return true;
-  return false;
+  return authorizeBearer(req, "CRON_SECRET");
 }
 
 export async function GET(req: NextRequest) {

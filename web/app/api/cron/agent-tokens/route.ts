@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, http, type Address } from "viem";
 import { base } from "viem/chains";
 import { serverClient } from "@/lib/supabase";
+import { authorizeBearer } from "@/lib/secret-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,13 +68,10 @@ const ERC20_ABI = [
   },
 ] as const;
 
+// Constant-time CRON_SECRET check via the shared helper; fail-closed
+// when env unset.
 function authorize(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const auth = req.headers.get("authorization") ?? "";
-  if (auth === `Bearer ${secret}`) return true;
-  if (req.nextUrl.searchParams.get("key") === secret) return true;
-  return false;
+  return authorizeBearer(req, "CRON_SECRET");
 }
 
 type BaseScanTx = {

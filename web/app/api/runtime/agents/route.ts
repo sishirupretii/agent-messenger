@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverClient } from "@/lib/supabase";
 import { decryptAgentKey } from "@/lib/key-vault";
+import { authorizeBearer } from "@/lib/secret-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,15 +25,15 @@ export const dynamic = "force-dynamic";
  * service-to-service only, and would 401 from a browser.
  */
 export async function GET(req: NextRequest) {
-  const secret = process.env.RUNTIME_FETCH_SECRET;
-  if (!secret) {
+  if (!process.env.RUNTIME_FETCH_SECRET) {
     return NextResponse.json(
       { error: "runtime_fetch_secret_not_set" },
       { status: 503 },
     );
   }
-  const auth = req.headers.get("authorization") ?? "";
-  if (auth !== `Bearer ${secret}`) {
+  // Constant-time check — plain string-equality on the Bearer token
+  // leaks the secret byte-by-byte to a timing attacker.
+  if (!authorizeBearer(req, "RUNTIME_FETCH_SECRET")) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -94,14 +95,14 @@ export async function GET(req: NextRequest) {
  * Body: { address: string }
  */
 export async function POST(req: NextRequest) {
-  const secret = process.env.RUNTIME_FETCH_SECRET;
-  if (!secret) {
+  if (!process.env.RUNTIME_FETCH_SECRET) {
     return NextResponse.json(
       { error: "runtime_fetch_secret_not_set" },
       { status: 503 },
     );
   }
-  if (req.headers.get("authorization") !== `Bearer ${secret}`) {
+  // Same constant-time path as the GET — see comment above.
+  if (!authorizeBearer(req, "RUNTIME_FETCH_SECRET")) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   let body: { address?: string };

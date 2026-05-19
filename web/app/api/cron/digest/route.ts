@@ -38,13 +38,16 @@ const MAX_USERS_PER_TICK = 10;
 const MIN_HOURS_BETWEEN = 23;
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
+import { authorizeBearer } from "@/lib/secret-auth";
+
+/**
+ * Cron authorization. Constant-time check against CRON_SECRET (set in
+ * Vercel env + passed automatically by Vercel Cron). Strict fail-closed
+ * — if the env isn't set, every request is 401, including local. Set
+ * CRON_SECRET locally to test.
+ */
 function authorize(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const auth = req.headers.get("authorization") ?? "";
-  if (auth === `Bearer ${secret}`) return true;
-  if (req.nextUrl.searchParams.get("key") === secret) return true;
-  return false;
+  return authorizeBearer(req, "CRON_SECRET");
 }
 
 function shortAddr(addr: string): string {

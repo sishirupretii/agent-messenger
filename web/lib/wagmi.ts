@@ -12,11 +12,22 @@ import {
   walletConnect,
 } from "wagmi/connectors";
 
-const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+// Read but tolerate missing — falling back to a stub keeps `next build`
+// happy on machines without local env. Vercel deploys always have it set
+// and we never actually open a WalletConnect session without it (RainbowKit
+// only surfaces the WC option after page hydration). If somebody clicks
+// the WC option without a real id they'll see an in-modal error, which is
+// the right user-visible failure mode.
+const projectId =
+  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ??
+  "MISSING_WALLETCONNECT_PROJECT_ID";
 
-if (!projectId) {
-  throw new Error(
-    "Missing NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID — add it in Vercel project settings (Environment Variables).",
+if (
+  projectId === "MISSING_WALLETCONNECT_PROJECT_ID" &&
+  typeof window !== "undefined"
+) {
+  console.warn(
+    "[wagmi] NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set — WalletConnect connector disabled. Set it in Vercel env or .env.local.",
   );
 }
 
