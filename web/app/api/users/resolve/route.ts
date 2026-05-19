@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// CORS handled centrally by middleware.ts.
+
 /**
  * GET /api/users/resolve?handle=<0x | name.base.eth | name.eth>
  *

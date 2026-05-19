@@ -4,13 +4,13 @@ import { trendingTokensOnBase, newPoolsOnBase } from "@/lib/geckoterminal";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// CORS handled centrally by middleware.ts.
+
 /**
  * GET /api/tokens/trending?kind=trending|new
  *
  * Hot tokens on Base, served from GeckoTerminal's public API and
- * cached 60 s in-process. No API key required; this is the same data
- * Bankr's /agent/prompt routes to internally when you ask about
- * trending tokens.
+ * cached 60 s in-process.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);

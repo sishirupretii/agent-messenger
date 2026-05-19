@@ -4,6 +4,8 @@ import { getPortfolio } from "@/lib/portfolio";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// CORS handled centrally by middleware.ts (matcher = /api/me/:path*).
+
 /**
  * GET /api/me/portfolio?address=0x…&watchlist=0xa,0xb,0xc
  *

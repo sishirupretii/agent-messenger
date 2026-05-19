@@ -4,6 +4,8 @@ import { tokenOnBase } from "@/lib/geckoterminal";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// CORS handled centrally by middleware.ts.
+
 /**
  * GET /api/tokens/[address]
  *
