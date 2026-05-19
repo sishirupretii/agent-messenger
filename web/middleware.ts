@@ -59,5 +59,6 @@ export const config = {
     "/api/posts/:path*",
     "/api/agents",
     "/api/agents/:path*",
+    "/api/interactions/:path*",
   ],
 };
