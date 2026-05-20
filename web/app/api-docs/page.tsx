@@ -19,9 +19,27 @@ import { Footer } from "@/components/shell/Footer";
  * mocked data.
  */
 
-type Tab = "fetch" | "curl" | "sdk";
+type Tab = "fetch" | "curl" | "sdk" | "openai";
 
 const ENDPOINTS = [
+  {
+    group: "OpenAI-compat (v1)",
+    intro:
+      "Drop-in replacement for the OpenAI SDK. Set your client baseURL to /api/v1 and SIGNA becomes the model provider — no API key needed. Wallet-signed replies + source citations are surfaced in a top-level `signa` extension block that OpenAI clients ignore.",
+    rows: [
+      {
+        method: "POST",
+        path: "/api/v1/chat/completions",
+        summary: "OpenAI chat.completion shape — drop-in for openai SDK",
+        body: '{ "model": "signa-gateway", "messages": [{ "role": "user", "content": "..." }] }',
+      },
+      {
+        method: "GET",
+        path: "/api/v1/models",
+        summary: "OpenAI-compatible model listing (signa-gateway, signa-agent)",
+      },
+    ],
+  },
   {
     group: "Gateway",
     intro:
@@ -174,7 +192,7 @@ const METHOD_STYLE: Record<string, string> = {
 };
 
 export default function ApiDocsPage() {
-  const [tab, setTab] = useState<Tab>("fetch");
+  const [tab, setTab] = useState<Tab>("openai");
   const [specCount, setSpecCount] = useState<Record<string, number> | null>(
     null,
   );
@@ -388,7 +406,7 @@ export default function ApiDocsPage() {
 
             <div className="mt-10 rounded-2xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
               <div className="flex border-b border-white/[0.06] text-[12px] font-mono">
-                {(["fetch", "curl", "sdk"] as Tab[]).map((t) => (
+                {(["openai", "fetch", "curl", "sdk"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
@@ -404,6 +422,7 @@ export default function ApiDocsPage() {
                 ))}
               </div>
               <pre className="p-5 sm:p-6 text-[12.5px] leading-[1.7] font-mono text-white/85 overflow-x-auto">
+                {tab === "openai" && OPENAI_SNIPPET}
                 {tab === "fetch" && FETCH_SNIPPET}
                 {tab === "curl" && CURL_SNIPPET}
                 {tab === "sdk" && SDK_SNIPPET}
@@ -539,6 +558,42 @@ function Stat({ k, v }: { k: string; v: number | string }) {
     </div>
   );
 }
+
+const OPENAI_SNIPPET = `// SIGNA is OpenAI-API-compatible. Use the official SDK, swap one line.
+import OpenAI from "openai";
+
+const ai = new OpenAI({
+  baseURL: "https://www.signaagent.xyz/api/v1",
+  apiKey: "not-required-but-the-sdk-needs-a-string",
+});
+
+const completion = await ai.chat.completions.create({
+  model: "signa-gateway",   // auto-routes to the best specialist agent
+  messages: [
+    { role: "user", content: "what is the price of $USDC on base?" },
+  ],
+});
+
+console.log(completion.choices[0].message.content);
+
+// SIGNA extension — verifiable proof + cited sources, attached to
+// every response. Strict OpenAI clients ignore unknown top-level fields,
+// so this is purely additive.
+console.log(completion.signa.signed);          // true
+console.log(completion.signa.signature);       // 0x...
+console.log(completion.signa.sources);         // [{ kind: "geckoterminal", ref: "0x833589..." }]
+console.log(completion.signa.permalink);       // shareable URL with OG card
+
+// Pin to a specific agent instead of auto-routing:
+const direct = await ai.chat.completions.create({
+  model: "signa-agent",
+  messages: [{ role: "user", content: "build me a dashboard" }],
+  // @ts-expect-error — SIGNA extension. OpenAI SDKs forward unknown fields.
+  agent_address: "0x000000000000000000000000000000000000a9e1",
+});
+
+// Works the same way with LangChain, LlamaIndex, Vercel AI SDK,
+// Mastra, the python SDK — anything that speaks /v1/chat/completions.`;
 
 const FETCH_SNIPPET = `// Any browser, Node 18+, Bun, Deno, Cloudflare Workers — pure fetch.
 const res = await fetch("https://www.signaagent.xyz/api/gateway/respond", {

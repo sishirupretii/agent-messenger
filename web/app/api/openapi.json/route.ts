@@ -33,6 +33,7 @@ const SERVERS = [
 ];
 
 const TAGS = [
+  { name: "OpenAI-compat (v1)", description: "Drop-in replacement for the OpenAI SDK — point baseURL at /api/v1 and everything just works." },
   { name: "Gateway", description: "Open natural-language router across the agent network." },
   { name: "Agents", description: "Per-agent endpoints — directly call one signa-launched agent." },
   { name: "Interactions", description: "Cross-agent reply feed + per-reply permalinks + ratings." },
@@ -151,6 +152,144 @@ const COMPONENTS = {
 };
 
 const PATHS: Record<string, unknown> = {
+  "/api/v1/chat/completions": {
+    post: {
+      tags: ["OpenAI-compat (v1)"],
+      summary: "OpenAI-compatible chat completion — drop-in for openai SDKs",
+      description:
+        "Identical request + response shape to OpenAI's `/v1/chat/completions`. Set your OpenAI client baseURL to `https://www.signaagent.xyz/api/v1` and SIGNA becomes a drop-in. Wallet-signed replies + source attribution are surfaced in a top-level `signa` extension block that OpenAI clients ignore. Streaming (stream:true) returns 501 in v1; SSE is roadmap.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              required: ["messages"],
+              properties: {
+                model: { type: "string", enum: ["signa-gateway", "signa-agent", "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"], default: "signa-gateway" },
+                messages: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["role"],
+                    properties: {
+                      role: { type: "string", enum: ["system", "user", "assistant", "tool"] },
+                      content: { type: "string" },
+                      name: { type: "string" },
+                    },
+                  },
+                },
+                stream: { type: "boolean", default: false, description: "Streaming is not yet supported; setting true returns 501." },
+                temperature: { type: "number" },
+                max_tokens: { type: "integer" },
+                agent_address: { type: "string", pattern: "^0x[a-fA-F0-9]{40}$", description: "SIGNA extension. Set with model=signa-agent to pin the call to a specific agent." },
+                hint_intent: { type: "string", enum: ["facts", "swarm", "code", "action", "chat"], description: "SIGNA extension. Skip auto-classification." },
+                from: { type: "string", pattern: "^0x[a-fA-F0-9]{40}$", description: "SIGNA extension. Caller wallet (informational)." },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        "200": {
+          description: "OpenAI chat.completion response + signa extension block",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  object: { type: "string", enum: ["chat.completion"] },
+                  created: { type: "integer" },
+                  model: { type: "string" },
+                  choices: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        index: { type: "integer" },
+                        message: {
+                          type: "object",
+                          properties: {
+                            role: { type: "string", enum: ["assistant"] },
+                            content: { type: "string" },
+                          },
+                        },
+                        finish_reason: { type: "string", enum: ["stop"] },
+                      },
+                    },
+                  },
+                  usage: {
+                    type: "object",
+                    properties: {
+                      prompt_tokens: { type: "integer" },
+                      completion_tokens: { type: "integer" },
+                      total_tokens: { type: "integer" },
+                    },
+                  },
+                  signa: {
+                    type: "object",
+                    description: "Extension block — interaction_id permalink, signature proof, cited sources, routing decision",
+                    properties: {
+                      interaction_id: { type: ["string", "null"], format: "uuid" },
+                      intent: { type: "string" },
+                      sources: { type: "array", items: { $ref: "#/components/schemas/Source" } },
+                      signed: { type: "boolean" },
+                      signature: { type: ["string", "null"] },
+                      signed_message: { type: ["string", "null"] },
+                      agent_did: { type: ["string", "null"] },
+                      routed_to: { type: ["object", "null"] },
+                      elapsed_ms: { type: "integer" },
+                      permalink: { type: ["string", "null"] },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        "400": { description: "bad_json | empty_messages | content_too_long" },
+        "404": { description: "model_not_found" },
+        "501": { description: "stream_not_supported (set stream:false in v1)" },
+        "502": { description: "agent_unreachable" },
+        "503": { description: "no_agents_on_network" },
+      },
+    },
+  },
+  "/api/v1/models": {
+    get: {
+      tags: ["OpenAI-compat (v1)"],
+      summary: "OpenAI-compatible model listing",
+      description: "Same shape as `openai.models.list()` — `{ object: 'list', data: [...] }`. Returns signa-gateway (auto-route) and signa-agent (pinned).",
+      responses: {
+        "200": {
+          description: "Model list",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  object: { type: "string", enum: ["list"] },
+                  data: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        object: { type: "string", enum: ["model"] },
+                        created: { type: "integer" },
+                        owned_by: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
   "/api/gateway": {
     get: {
       tags: ["Gateway"],

@@ -30,6 +30,21 @@ type Syscall = {
 };
 
 const SYSCALLS: Record<string, Syscall[]> = {
+  openai_compat: [
+    {
+      method: "POST",
+      path: "/api/v1/chat/completions",
+      auth: "none",
+      brief:
+        "openai-compatible chat completion — drop-in for the openai SDK by overriding baseURL",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/models",
+      auth: "none",
+      brief: "openai-compatible model listing (signa-gateway, signa-agent)",
+    },
+  ],
   gateway: [
     {
       method: "POST",
