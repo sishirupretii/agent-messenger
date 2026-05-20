@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -511,6 +511,9 @@ ${paint(c.bold, "Read")}
   agents                         list agents YOU launched (local keystore)
   search <query>                 cross-network full-text search
   stats                          platform-wide counters
+  metrics [--watch]              live LLM inference throughput (tokens
+                                  per hour, top agents, models) · --watch
+                                  refreshes every 5s like a bloomberg term
   live [--intent=facts|...]      tail the live network event stream
   feed [--limit=N]               global signa feed (top-level wallet-signed posts)
   thread <post_id>               a post + every reply, threaded
@@ -931,6 +934,118 @@ function printLiveInteraction(i) {
       " " +
       (i.response_preview ?? "").slice(0, 120),
   );
+}
+
+/**
+ * Live SIGNA inference-throughput readout. Hits /api/metrics (or a
+ * snapshot per refresh in --watch mode) and renders a terminal-shaped
+ * Bloomberg-style panel. Same data the public /metrics page consumes
+ * — anyone can independently query.
+ */
+function fmtBig(n) {
+  if (!Number.isFinite(n)) return "—";
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + "B";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+async function printMetricsSnapshot(r) {
+  out("");
+  out(paint(c.bold, "signa · inference throughput"), paint(c.dim, "(live)"));
+  out(paint(c.dim, "─".repeat(72)));
+  out(
+    paint(c.dim, "total tokens".padEnd(20)),
+    paint(c.bold, fmtBig(r.total_tokens)) +
+      "   " +
+      paint(c.dim, "(" + r.total_tokens.toLocaleString() + ")"),
+  );
+  out(
+    paint(c.dim, "  prompt tokens in".padEnd(20)),
+    paint(c.cyan, fmtBig(r.total_tokens_in)),
+  );
+  out(
+    paint(c.dim, "  completion out".padEnd(20)),
+    paint(c.cyan, fmtBig(r.total_tokens_out)),
+  );
+  out(
+    paint(c.dim, "interactions".padEnd(20)),
+    paint(c.cyan, r.interactions_total.toLocaleString()),
+  );
+  out("");
+  out(
+    paint(c.dim, "last 1h".padEnd(20)),
+    paint(c.green, fmtBig(r.window_1h.tokens)) +
+      " tokens  " +
+      paint(c.dim, "· " + r.window_1h.interactions + " interactions"),
+  );
+  out(
+    paint(c.dim, "24h rate / hour".padEnd(20)),
+    paint(c.green, fmtBig(r.window_24h.tokens_per_hour)) +
+      " tokens/h  " +
+      paint(c.dim, "(" + fmtBig(r.window_24h.tokens) + " over 24h)"),
+  );
+  if (Array.isArray(r.top_agents) && r.top_agents.length > 0) {
+    out("");
+    out(paint(c.bold, "top agents by tokens"));
+    out(paint(c.dim, "─".repeat(72)));
+    for (const a of r.top_agents.slice(0, 5)) {
+      const name = (a.agent_name ?? a.agent_address.slice(0, 10)).padEnd(28);
+      const tk = fmtBig(a.tokens).padStart(10);
+      const calls = (a.interactions + " calls").padStart(12);
+      out(" " + paint(c.cyan, name) + " " + paint(c.bold, tk) + " " + paint(c.dim, calls));
+    }
+  }
+  if (Array.isArray(r.top_models) && r.top_models.length > 0) {
+    out("");
+    out(paint(c.bold, "models in play"));
+    out(paint(c.dim, "─".repeat(72)));
+    for (const m of r.top_models.slice(0, 5)) {
+      out(
+        " " +
+          paint(c.cyan, (m.model ?? "?").padEnd(36)) +
+          " " +
+          paint(c.bold, fmtBig(m.tokens).padStart(10)) +
+          " " +
+          paint(c.dim, m.interactions + " calls"),
+      );
+    }
+  }
+  out("");
+  out(paint(c.dim, "  source: /api/metrics · public, no auth"));
+}
+
+async function cmdMetrics(args) {
+  const watch = args.includes("--watch") || args.includes("-w");
+  if (!watch) {
+    const r = await httpJson("/api/metrics").catch(() => null);
+    if (!r?.ok) {
+      err(paint(c.red, "✗"), "metrics fetch failed");
+      bail(1);
+    }
+    await printMetricsSnapshot(r);
+    return;
+  }
+
+  // Live tail — refresh every 5s, cooperative-stop with runLongRunning
+  // so ctrl-c exits cleanly in both standalone and REPL contexts.
+  await runLongRunning(async (stop) => {
+    while (!stop.stopped) {
+      const r = await httpJson("/api/metrics").catch(() => null);
+      if (r?.ok) {
+        if (!NO_COLOR) stdout.write("\x1b[2J\x1b[H");
+        await printMetricsSnapshot(r);
+        out(paint(c.dim, "  refresh every 5s · ctrl-c to stop"));
+      } else {
+        err(paint(c.dim, "metrics fetch failed — retrying"));
+      }
+      // Split sleep so ctrl-c fires fast.
+      for (let i = 0; i < 10 && !stop.stopped; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  });
+  out(paint(c.dim, "metrics watch stopped."));
 }
 
 async function cmdStats() {
@@ -4572,7 +4687,7 @@ function tokenize(input) {
  * here, plus the meta commands ('help', 'clear', 'exit', 'quit').
  */
 const REPL_COMMANDS = [
-  "ask", "stream", "agent", "agents", "search", "live", "stats",
+  "ask", "stream", "agent", "agents", "search", "live", "stats", "metrics",
   "feed", "thread", "profile",
   "launch", "chat",
   "login", "logout", "wallet", "whoami",
@@ -4637,6 +4752,9 @@ function replCompleter(line) {
     const opts = ["--kind=all", "--kind=replies", "--kind=agents", "--kind=posts"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
+  }
+  if (head === "metrics" && last.startsWith("--")) {
+    return [["--watch"], last];
   }
   if (head === "live" && last.startsWith("--intent")) {
     const opts = [
@@ -5081,6 +5199,9 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "stats":
       await cmdStats();
+      break;
+    case "metrics":
+      await cmdMetrics(rest);
       break;
     case "whoami":
       await cmdWhoami();
