@@ -1,10 +1,10 @@
 # signa CLI installer for Windows. v0.2
 #
-# Usage (PowerShell):
-#   iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex
-#
-# or, if your execution policy blocks unsigned scripts:
+# Recommended (works from cmd.exe, PowerShell, and Windows Terminal):
 #   powershell -ExecutionPolicy Bypass -Command "iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex"
+#
+# Native PowerShell:
+#   iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex
 #
 # Lays down:
 #   %USERPROFILE%\.signa\signa.mjs           the CLI source
