@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -528,6 +528,17 @@ ${paint(c.bold, "Partner ecosystem")}
   bankr status                   show whether your bankr key is connected
   bankr trade "<prompt>"         wallet-signed natural-language trade
   miroshark <scenario>           swarm simulation via the gateway
+
+${paint(c.bold, "Daily-use")}
+  verify <interaction_id>        local cryptographic re-verification of a
+                                  signed agent reply — proves the server
+                                  did not forge it
+  portfolio                      your token holdings on Base + watchlist
+  trending [--kind=new] [--limit=N]   hot tokens on Base via GeckoTerminal
+  token <0x address>             detailed info for a single Base token
+  watchlist                      list your bookmarked tokens
+  watchlist add <0x token>       wallet-signed bookmark
+  watchlist remove <0x token>    wallet-signed unbookmark
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -2494,6 +2505,352 @@ async function cmdBankr(args) {
   bail(2);
 }
 
+// ---------- verify: cryptographic re-verification of a signed reply ----------
+//
+// The single command that proves SIGNA's "server cannot forge a message"
+// claim. Fetches an interaction by id, pulls the signature + canonical
+// signed_message + agent_address, then runs viem's verifyMessage()
+// LOCALLY — no signa server in the verification path. The check is
+// reproducible by any third party with viem.
+
+async function cmdVerify(args) {
+  const id = args[0];
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+    err("usage: verify <uuid>");
+    err("  works on either an interaction id (agent reply) or a post id");
+    err("  (wallet-signed feed entry). examples:");
+    err("    verify 81a2ebab-f8ba-4d36-a22d-c397e5da8c18    interaction");
+    err("    verify b933e4f2-647d-468b-bf6a-9a60a0a4c504    post");
+    bail(2);
+  }
+
+  // Try interaction first, then post. Both expose signature +
+  // signed_message + the signer address so any third party can
+  // re-verify with viem locally — no signa in the trust path.
+  const iRes = await httpJson(`/api/interactions/${id}`).catch(() => null);
+  if (iRes?.interaction) {
+    await _verifyInteraction(iRes.interaction, iRes.agent, id);
+    return;
+  }
+  const pRes = await httpJson(`/api/posts/${id}`).catch(() => null);
+  if (pRes?.post) {
+    await _verifyPost(pRes.post, id);
+    return;
+  }
+  err(paint(c.red, "✗"), `${id} is neither a known interaction nor a post`);
+  bail(1);
+}
+
+async function _verifyInteraction(i, agent, id) {
+  out("");
+  out(paint(c.bold, "verifying interaction"), paint(c.dim, id));
+  out(paint(c.dim, "─".repeat(56)));
+  out(
+    paint(c.dim, "agent".padEnd(14)),
+    paint(c.cyan, i.agent_address) +
+      " " +
+      paint(c.dim, agent?.name ? `(${agent.name})` : ""),
+  );
+  if (i.sender_address) {
+    out(paint(c.dim, "sender".padEnd(14)), i.sender_address);
+  }
+  out(paint(c.dim, "intent".padEnd(14)), paint(intentColor(i.intent), i.intent));
+  out(paint(c.dim, "created".padEnd(14)), i.created_at);
+
+  if (!i.signed || !i.signature || !i.signed_message) {
+    out("");
+    out(paint(c.yellow, "!"), "this reply was not wallet-signed.");
+    out(paint(c.dim, "  the agent's owner hasn't enabled custodial signing yet."));
+    out(paint(c.dim, "  the row is still authentic — anyone can audit our DB —"));
+    out(paint(c.dim, "  but it's not cryptographically attested to the agent's wallet."));
+    return;
+  }
+  await _runVerify(i.agent_address, i.signed_message, i.signature);
+}
+
+async function _verifyPost(p, id) {
+  out("");
+  out(paint(c.bold, "verifying post"), paint(c.dim, id));
+  out(paint(c.dim, "─".repeat(56)));
+  const who = p.author?.basename || p.author?.ens_name || p.author_address;
+  out(paint(c.dim, "author".padEnd(14)), paint(c.cyan, p.author_address) + " " + paint(c.dim, who !== p.author_address ? `(${who})` : ""));
+  out(paint(c.dim, "created".padEnd(14)), p.created_at);
+  if (p.parent_id) out(paint(c.dim, "reply to".padEnd(14)), p.parent_id);
+  out(paint(c.dim, "content".padEnd(14)), (p.content ?? "").slice(0, 80));
+
+  if (!p.signature || !p.signed_message) {
+    out("");
+    out(paint(c.yellow, "!"), "this post has no signature on record (legacy entry).");
+    return;
+  }
+  await _runVerify(p.author_address, p.signed_message, p.signature);
+}
+
+async function _runVerify(expectedAddress, signed_message, signature) {
+  // Cryptographic re-verification — same primitive the server uses on
+  // ingest, executed CLIENT-SIDE so we depend on viem + math, not on
+  // signaagent.xyz being honest.
+  const vi = await viem();
+  let ok;
+  try {
+    ok = await vi.verifyMessage({
+      address: expectedAddress,
+      message: signed_message,
+      signature,
+    });
+  } catch (e) {
+    err(paint(c.red, "✗"), `verify threw: ${e?.shortMessage ?? e?.message ?? e}`);
+    bail(1);
+  }
+
+  out("");
+  if (ok) {
+    out(paint(c.green, "✓ signature VALID"));
+    out(paint(c.dim, "  this content was provably written by the wallet at"));
+    out(paint(c.dim, "  " + expectedAddress));
+    out(paint(c.dim, "  signaagent.xyz cannot have forged it — we don't hold this key."));
+  } else {
+    out(paint(c.red, "✗ signature MISMATCH"));
+    out(paint(c.dim, "  the on-record signature does not validate against the address."));
+    out(paint(c.dim, "  this is either tampering or a serialization bug. report it."));
+  }
+  out("");
+  out(paint(c.dim, "  signer       "), paint(c.cyan, expectedAddress));
+  out(
+    paint(c.dim, "  signature    "),
+    paint(c.dim, signature.slice(0, 22) + "…" + signature.slice(-8)),
+  );
+  out(
+    paint(c.dim, "  signed bytes "),
+    paint(
+      c.dim,
+      (signed_message ?? "")
+        .slice(0, 64)
+        .replace(/\n/g, " ⏎ ") +
+        (signed_message.length > 64 ? "…" : ""),
+    ),
+  );
+}
+
+// ---------- portfolio / trending / token / watchlist ----------
+
+async function signSignaWatchlistToggle({ address, token_address, op, ts }) {
+  // Mirrors buildMessageToSign("watchlist_toggle") server-side.
+  const acc = await account();
+  const message = [
+    `SIGNA watchlist ${op} v1`,
+    `ts:${ts}`,
+    `address:${address}`,
+    `token:${token_address}`,
+  ].join("\n");
+  const signature = await acc.viemAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function cmdPortfolio() {
+  const acc = await account();
+  const addr = acc.address.toLowerCase();
+  // Also pull the watchlist so portfolio enriches with bookmarked tokens.
+  const watchRes = await httpJson(`/api/me/watchlist?address=${addr}`).catch(
+    () => ({ watchlist: [] }),
+  );
+  const watchlist = watchRes.watchlist ?? [];
+  const qs =
+    watchlist.length > 0
+      ? `&watchlist=${watchlist.join(",")}`
+      : "";
+  const r = await httpJson(`/api/me/portfolio?address=${addr}${qs}`).catch(
+    (e) => ({ ok: false, error: e?.message }),
+  );
+  if (!r?.ok) {
+    err(paint(c.red, "✗"), `portfolio failed: ${r?.error ?? "unknown"}`);
+    bail(1);
+  }
+  out("");
+  out(paint(c.bold, "portfolio"), paint(c.dim, addr));
+  out(paint(c.dim, "─".repeat(72)));
+  if (typeof r.total_usd === "number") {
+    out(paint(c.dim, "total usd".padEnd(14)), paint(c.bold, "$" + r.total_usd.toFixed(2)));
+  }
+  if (Array.isArray(r.holdings) && r.holdings.length > 0) {
+    out("");
+    out(
+      paint(c.bold, " SYMBOL".padEnd(12)) +
+        paint(c.bold, " AMOUNT".padEnd(18)) +
+        paint(c.bold, " USD"),
+    );
+    out(paint(c.dim, "─".repeat(56)));
+    for (const h of r.holdings.slice(0, 30)) {
+      const sym = (h.symbol ?? "?").slice(0, 10);
+      const amt = (h.amount ?? "0").toString().slice(0, 16);
+      const usd = h.usd_value != null ? "$" + Number(h.usd_value).toFixed(2) : "—";
+      out(
+        " " +
+          paint(c.cyan, sym.padEnd(11)) +
+          " " +
+          amt.padEnd(17) +
+          " " +
+          paint(c.dim, usd),
+      );
+    }
+  } else {
+    out(paint(c.dim, "  no holdings on base mainnet (or balances are below dust threshold)"));
+  }
+  out("");
+}
+
+async function cmdTrending(args) {
+  let kind = "trending";
+  let limit = 20;
+  for (const a of args) {
+    if (a === "--kind=new" || a === "--new") kind = "new";
+    else if (a === "--kind=trending") kind = "trending";
+    else if (a.startsWith("--limit=")) limit = Math.max(1, Number(a.slice(8)) || 20);
+  }
+  const r = await httpJson(`/api/tokens/trending?kind=${kind}`).catch(() => null);
+  if (!r?.ok) {
+    err(paint(c.red, "✗"), "trending fetch failed");
+    bail(1);
+  }
+  const list = (r.tokens ?? []).slice(0, limit);
+  if (list.length === 0) {
+    out(paint(c.dim, "no tokens to show."));
+    return;
+  }
+  out("");
+  out(
+    paint(c.bold, kind === "new" ? "new pools on base" : "trending on base"),
+    paint(c.dim, `(${r.source})`),
+  );
+  out(paint(c.dim, "─".repeat(80)));
+  out(
+    paint(c.bold, " SYMBOL".padEnd(12)) +
+      paint(c.bold, " PRICE".padEnd(14)) +
+      paint(c.bold, " 24H".padEnd(10)) +
+      paint(c.bold, " ADDRESS"),
+  );
+  out(paint(c.dim, "─".repeat(80)));
+  for (const t of list) {
+    const sym = (t.symbol ?? "?").slice(0, 10);
+    const price = t.price_usd != null ? "$" + Number(t.price_usd).toPrecision(4) : "—";
+    const ch = t.change_24h_pct != null ? Number(t.change_24h_pct).toFixed(1) + "%" : "—";
+    const chColor = t.change_24h_pct == null ? c.dim : t.change_24h_pct >= 0 ? c.green : c.red;
+    const addr = (t.address ?? "").slice(0, 10) + "…" + (t.address ?? "").slice(-4);
+    out(
+      " " +
+        paint(c.cyan, sym.padEnd(11)) +
+        " " +
+        price.padEnd(13) +
+        " " +
+        paint(chColor, ch.padEnd(9)) +
+        " " +
+        paint(c.dim, addr),
+    );
+  }
+  out("");
+  out(paint(c.dim, `  ${list.length} tokens · source: ${r.source}`));
+}
+
+async function cmdToken(args) {
+  const a = args[0];
+  if (!a || !/^0x[a-fA-F0-9]{40}$/.test(a)) {
+    err("usage: token <0x address on Base>");
+    err("  find addresses via: signa trending");
+    bail(2);
+  }
+  const addr = a.toLowerCase();
+  const r = await httpJson(`/api/tokens/${addr}`).catch(() => null);
+  if (!r?.ok) {
+    err(paint(c.red, "✗"), `token ${addr} not found on Base mainnet`);
+    bail(1);
+  }
+  out("");
+  out(paint(c.bold, "$" + (r.symbol ?? "?")), paint(c.dim, "·"), r.name ?? "");
+  out(paint(c.dim, "─".repeat(48)));
+  out(paint(c.dim, "address".padEnd(16)), paint(c.cyan, r.address ?? addr));
+  if (r.price_usd != null) out(paint(c.dim, "price".padEnd(16)), paint(c.bold, "$" + Number(r.price_usd).toPrecision(6)));
+  if (r.change_24h_pct != null) {
+    const ch = Number(r.change_24h_pct).toFixed(2) + "%";
+    const col = r.change_24h_pct >= 0 ? c.green : c.red;
+    out(paint(c.dim, "24h".padEnd(16)), paint(col, ch));
+  }
+  if (r.volume_24h_usd != null) out(paint(c.dim, "volume 24h".padEnd(16)), "$" + Number(r.volume_24h_usd).toFixed(0));
+  if (r.market_cap_usd != null) out(paint(c.dim, "market cap".padEnd(16)), "$" + Number(r.market_cap_usd).toFixed(0));
+  if (r.fdv_usd != null) out(paint(c.dim, "fdv".padEnd(16)), "$" + Number(r.fdv_usd).toFixed(0));
+  if (r.top_pool_address) {
+    out(paint(c.dim, "top pool".padEnd(16)), paint(c.dim, r.top_pool_address));
+  }
+  out("");
+  out(paint(c.dim, "  basescan: https://basescan.org/token/" + addr));
+}
+
+async function cmdWatchlist(args) {
+  const sub = args[0];
+  const acc = await account();
+  const addr = acc.address.toLowerCase();
+
+  // Bare `watchlist` — list current bookmarks.
+  if (!sub || sub === "ls" || sub === "list") {
+    const r = await httpJson(`/api/me/watchlist?address=${addr}`).catch(
+      () => ({ watchlist: [] }),
+    );
+    const list = r.watchlist ?? [];
+    out("");
+    out(paint(c.bold, "watchlist"), paint(c.dim, addr));
+    out(paint(c.dim, "─".repeat(56)));
+    if (list.length === 0) {
+      out(paint(c.dim, "  no bookmarked tokens."));
+      out(
+        paint(c.dim, "  add one with:"),
+        paint(c.cyan, "signa watchlist add 0x<token_addr>"),
+      );
+      return;
+    }
+    for (const t of list) {
+      out("  " + paint(c.cyan, t));
+    }
+    out("");
+    out(paint(c.dim, `${list.length} token${list.length === 1 ? "" : "s"}`));
+    return;
+  }
+
+  if (sub !== "add" && sub !== "remove" && sub !== "rm") {
+    err("usage:");
+    err("  watchlist                       list bookmarked tokens");
+    err("  watchlist add <0x token_addr>   wallet-signed bookmark");
+    err("  watchlist remove <0x token>     wallet-signed unbookmark");
+    bail(2);
+  }
+  const op = sub === "remove" || sub === "rm" ? "remove" : "add";
+  const tokenAddr = (args[1] ?? "").toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(tokenAddr)) {
+    err("token must be a 0x… address on Base");
+    bail(2);
+  }
+  const ts = Date.now();
+  const { signature } = await signSignaWatchlistToggle({
+    address: addr,
+    token_address: tokenAddr,
+    op,
+    ts,
+  });
+  const r = await httpJson("/api/me/watchlist", {
+    method: "POST",
+    body: JSON.stringify({
+      address: addr,
+      token_address: tokenAddr,
+      op,
+      ts,
+      signature,
+    }),
+  });
+  if (!r.ok) {
+    err(paint(c.red, "✗"), r.error ?? `${op} failed`);
+    bail(1);
+  }
+  out(paint(c.green, "✓"), op === "add" ? "bookmarked" : "removed", paint(c.cyan, tokenAddr));
+}
+
 // ----- miroshark -----
 
 async function cmdMiroshark(args) {
@@ -2662,6 +3019,8 @@ const REPL_COMMANDS = [
   "send",
   // partner integrations
   "aeon", "gitlawb", "bankr", "miroshark",
+  // daily-use + verify showpiece
+  "verify", "portfolio", "trending", "token", "watchlist",
   "update",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
@@ -2735,6 +3094,16 @@ function replCompleter(line) {
   }
   if (head === "bankr" && tokens.length === 2) {
     const opts = ["status", "trade"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "watchlist" && tokens.length === 2) {
+    const opts = ["add", "remove", "ls"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "trending" && last.startsWith("--")) {
+    const opts = ["--kind=trending", "--kind=new", "--limit=10", "--limit=30"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
@@ -3087,6 +3456,21 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "miroshark":
       await cmdMiroshark(rest);
+      break;
+    case "verify":
+      await cmdVerify(rest);
+      break;
+    case "portfolio":
+      await cmdPortfolio();
+      break;
+    case "trending":
+      await cmdTrending(rest);
+      break;
+    case "token":
+      await cmdToken(rest);
+      break;
+    case "watchlist":
+      await cmdWatchlist(rest);
       break;
     case "search":
     case "s":
