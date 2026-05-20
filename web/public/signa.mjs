@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.8.1";
+const VERSION = "0.9.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -57,6 +57,13 @@ const HISTORY_PATH = join(SIGNA_HOME, "history");
 // envelope uploaded to the server contains only the agent's PUBLIC address
 // + signature, never the private key).
 const AGENTS_DIR = join(SIGNA_HOME, "agents");
+
+// XMTP local database directory — one SQLite file per wallet identity.
+// Contains the double-ratchet encryption state for E2E messaging. Treat
+// as sensitive: the file is what makes future messages decryptable. We
+// don't chmod 600 it explicitly because XMTP's libxmtp opens it RW;
+// leaving it at the default umask is fine for a single-user home dir.
+const XMTP_DIR = join(SIGNA_HOME, "xmtp");
 
 // Base mainnet — chain id 8453. RPC defaults to mainnet.base.org which
 // is public + rate-limited but works fine for low-volume CLI traffic.
@@ -532,6 +539,14 @@ ${paint(c.bold, "Partner ecosystem")}
   bankr status                   show whether your bankr key is connected
   bankr trade "<prompt>"         wallet-signed natural-language trade
   miroshark <scenario>           swarm simulation via the gateway
+
+${paint(c.bold, "XMTP — real P2P E2E messaging")}
+  xmtp init                       one-time identity registration on XMTP
+  xmtp status                     show your inbox id + conversations
+  xmtp check <0x address>         can this address receive XMTP?
+  xmtp dm <to> "<msg>"            E2E-encrypted DM via XMTP — no signa
+                                   server in the routing path
+  xmtp inbox                      list your XMTP conversations
 
 ${paint(c.bold, "Daily-use")}
   verify <interaction_id>        local cryptographic re-verification of a
@@ -3206,6 +3221,337 @@ async function cmdMiroshark(args) {
   printGatewayFooter(r);
 }
 
+// ---------- xmtp: real P2P E2E messaging ----------
+//
+// XMTP is a decentralized messaging network. Messages go peer-to-peer
+// through XMTP's relay mesh — signaagent.xyz is NOT in the routing
+// path. Encryption is libsignal-style double-ratchet, identity is
+// wallet-bound (registration is signed by the user's wallet, proving
+// they control the address).
+//
+// Local state lives at ~/.signa/xmtp/<wallet>.db3 — the SQLite db
+// XMTP uses to maintain the conversation ratchet. Losing this file
+// loses your end of past conversations (forward secrecy by design).
+// Identity itself is re-derivable from the wallet, so you can always
+// re-register; just past messages encrypted to the old installation
+// won't be readable.
+//
+// We lazy-load the SDK so users without @xmtp/node-sdk installed
+// (older installers, broken native bindings) can still use every
+// other signa command. Only `xmtp *` commands hard-require it.
+
+let _xmtp = null;
+async function xmtp() {
+  if (_xmtp) return _xmtp;
+  try {
+    _xmtp = await import("@xmtp/node-sdk");
+    return _xmtp;
+  } catch (e) {
+    err(paint(c.red, "✗"), "@xmtp/node-sdk is not available.");
+    err(
+      paint(c.dim, "  re-run the installer to pull it (and native bindings):"),
+    );
+    err(
+      paint(
+        c.cyan,
+        "    curl -fsSL https://www.signaagent.xyz/install.sh | bash   # mac/linux",
+      ),
+    );
+    err(
+      paint(
+        c.cyan,
+        '    powershell -ExecutionPolicy Bypass -Command "iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex"   # windows',
+      ),
+    );
+    err(paint(c.dim, `  (underlying error: ${e?.message ?? e})`));
+    bail(1);
+  }
+}
+
+/**
+ * Build the XMTP Signer object from a viem account. XMTP's signer
+ * contract wants:
+ *   - type: "EOA"
+ *   - signMessage(message: string) → Uint8Array
+ *   - getIdentifier() → { identifier: string, identifierKind: 0 }
+ *
+ * The signMessage callback must return RAW BYTES, not the 0x-prefixed
+ * hex string viem returns. We strip the prefix and hex-decode into a
+ * Uint8Array.
+ */
+async function xmtpSigner() {
+  const acc = await account();
+  return {
+    type: "EOA",
+    getIdentifier: () => ({
+      identifier: acc.address.toLowerCase(),
+      identifierKind: 0, // Ethereum
+    }),
+    signMessage: async (message) => {
+      const hexSig = await acc.viemAccount.signMessage({ message });
+      const raw = hexSig.startsWith("0x") ? hexSig.slice(2) : hexSig;
+      const bytes = new Uint8Array(raw.length / 2);
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(raw.slice(i * 2, i * 2 + 2), 16);
+      }
+      return bytes;
+    },
+  };
+}
+
+async function xmtpDbPath() {
+  const acc = await account();
+  await mkdir(XMTP_DIR, { recursive: true });
+  return join(XMTP_DIR, `${acc.address.toLowerCase()}.db3`);
+}
+
+/**
+ * Open (or create) an XMTP client for the current wallet. First call
+ * after `xmtp init` is fast; first ever call performs the on-network
+ * identity registration which signs a "create_inbox" payload with the
+ * wallet. We always use production by default; SIGNA_XMTP_ENV can
+ * override to "dev" or "local" for development.
+ */
+async function xmtpClient() {
+  const m = await xmtp();
+  const signer = await xmtpSigner();
+  const dbPath = await xmtpDbPath();
+  const xmtpEnv = env.SIGNA_XMTP_ENV || "production";
+  try {
+    return await m.Client.create(signer, {
+      env: xmtpEnv,
+      dbPath,
+    });
+  } catch (e) {
+    err(paint(c.red, "✗"), `xmtp client init failed: ${e?.message ?? e}`);
+    bail(1);
+  }
+}
+
+async function cmdXmtp(args) {
+  const sub = args[0];
+  if (sub === "init") return cmdXmtpInit();
+  if (sub === "status") return cmdXmtpStatus();
+  if (sub === "dm") return cmdXmtpDm(args.slice(1));
+  if (sub === "inbox") return cmdXmtpInbox(args.slice(1));
+  if (sub === "check") return cmdXmtpCheck(args.slice(1));
+  err("usage:");
+  err("  xmtp init                    one-time identity registration on the XMTP network");
+  err("  xmtp status                  show your XMTP inbox id, installation count");
+  err("  xmtp check <0x address>      can this address receive XMTP messages?");
+  err("  xmtp dm <addr|name> <msg>    E2E-encrypted DM via XMTP (no signa in path)");
+  err("  xmtp inbox                   list your XMTP conversations + latest message");
+  bail(2);
+}
+
+async function cmdXmtpInit() {
+  out(paint(c.dim, "registering this wallet on the XMTP network…"));
+  out(paint(c.dim, "  first run takes ~5s · subsequent runs are instant"));
+  const client = await xmtpClient();
+  const inboxId = client.inboxId;
+  const installationId = client.installationId;
+  out("");
+  out(paint(c.green, "✓"), "xmtp identity ready");
+  out(paint(c.dim, "inbox id".padEnd(16)), paint(c.cyan, inboxId));
+  out(
+    paint(c.dim, "installation".padEnd(16)),
+    paint(c.dim, installationId.slice(0, 16) + "…"),
+  );
+  out(paint(c.dim, "db".padEnd(16)), await xmtpDbPath());
+  out("");
+  out(paint(c.dim, "  now you can:"));
+  out(paint(c.dim, "    signa xmtp dm vitalik.eth \"hello via xmtp\""));
+  out(paint(c.dim, "    signa xmtp inbox"));
+}
+
+async function cmdXmtpStatus() {
+  const client = await xmtpClient();
+  out("");
+  out(paint(c.bold, "xmtp status"));
+  out(paint(c.dim, "─".repeat(56)));
+  out(paint(c.dim, "inbox id".padEnd(16)), paint(c.cyan, client.inboxId));
+  out(
+    paint(c.dim, "installation".padEnd(16)),
+    paint(c.dim, client.installationId.slice(0, 16) + "…"),
+  );
+  out(paint(c.dim, "env".padEnd(16)), env.SIGNA_XMTP_ENV || "production");
+  out(paint(c.dim, "db".padEnd(16)), await xmtpDbPath());
+  // Count conversations
+  try {
+    await client.conversations.sync();
+    const convos = await client.conversations.list();
+    out(paint(c.dim, "conversations".padEnd(16)), paint(c.cyan, String(convos.length)));
+  } catch {
+    // ignore — sync issues shouldn't block status read
+  }
+}
+
+async function cmdXmtpCheck(args) {
+  const addr = (args[0] ?? "").toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(addr)) {
+    err("usage: xmtp check <0x address>");
+    bail(2);
+  }
+  const m = await xmtp();
+  const xmtpEnv = env.SIGNA_XMTP_ENV || "production";
+  const result = await m.Client.canMessage(
+    [{ identifier: addr, identifierKind: 0 }],
+    xmtpEnv,
+  );
+  const canMessage = result.get(addr) === true;
+  out("");
+  out(paint(c.bold, "xmtp reachability"));
+  out(paint(c.dim, "─".repeat(56)));
+  out(paint(c.dim, "address".padEnd(16)), paint(c.cyan, addr));
+  if (canMessage) {
+    out(
+      paint(c.dim, "reachable".padEnd(16)),
+      paint(c.green, "yes — they have a registered XMTP identity"),
+    );
+    out(paint(c.dim, "  dm them with: signa xmtp dm " + addr + " \"...\""));
+  } else {
+    out(
+      paint(c.dim, "reachable".padEnd(16)),
+      paint(c.yellow, "no — no XMTP identity registered for this address"),
+    );
+    out(paint(c.dim, "  the recipient must xmtp init first before they can receive."));
+  }
+}
+
+async function cmdXmtpDm(args) {
+  const recipient = args[0];
+  const message = args.slice(1).join(" ").trim();
+  if (!recipient || !message) {
+    err("usage: xmtp dm <0x address | basename | ens> \"<message>\"");
+    bail(2);
+  }
+  // Resolve handle to address.
+  let toAddr = recipient.toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(toAddr)) {
+    const resolved = await httpJson(
+      `/api/users/resolve?handle=${encodeURIComponent(recipient)}`,
+    ).catch(() => null);
+    if (!resolved?.address) {
+      err(paint(c.red, "✗"), `couldn't resolve "${recipient}"`);
+      bail(1);
+    }
+    toAddr = resolved.address.toLowerCase();
+  }
+
+  const m = await xmtp();
+  const client = await xmtpClient();
+  const xmtpEnv = env.SIGNA_XMTP_ENV || "production";
+
+  // Pre-flight reachability check so we fail fast with a useful message
+  // instead of a cryptic XMTP error.
+  const reach = await m.Client.canMessage(
+    [{ identifier: toAddr, identifierKind: 0 }],
+    xmtpEnv,
+  );
+  if (reach.get(toAddr) !== true) {
+    err(paint(c.red, "✗"), `${toAddr} has no XMTP identity registered.`);
+    err(paint(c.dim, "  XMTP is opt-in — recipient must `xmtp init` first."));
+    err(
+      paint(c.dim, "  use `signa dm` for the legacy wallet-signed @-mention path"),
+    );
+    bail(1);
+  }
+
+  out(paint(c.dim, "opening conversation…"));
+  const dm = await client.conversations.newDmWithIdentifier({
+    identifier: toAddr,
+    identifierKind: 0,
+  });
+  await dm.send(message);
+  out("");
+  out(paint(c.green, "✓"), "xmtp message sent");
+  out(paint(c.dim, "to".padEnd(16)), paint(c.cyan, toAddr));
+  out(paint(c.dim, "conversation".padEnd(16)), paint(c.dim, dm.id));
+  out(paint(c.dim, "  delivered through the XMTP relay network."));
+  out(paint(c.dim, "  signaagent.xyz was not in the path."));
+}
+
+async function cmdXmtpInbox(args) {
+  let limit = 10;
+  for (const a of args) {
+    if (a.startsWith("--limit=")) limit = Math.max(1, Number(a.slice(8)) || 10);
+  }
+  const client = await xmtpClient();
+  out(paint(c.dim, "syncing xmtp conversations…"));
+  await client.conversations.sync();
+  const convos = await client.conversations.list();
+  if (convos.length === 0) {
+    out("");
+    out(paint(c.dim, "no xmtp conversations yet."));
+    out(paint(c.dim, "  start one with: signa xmtp dm <addr> \"...\""));
+    return;
+  }
+  out("");
+  out(paint(c.bold, "xmtp inbox"));
+  out(paint(c.dim, "─".repeat(72)));
+  for (const conv of convos.slice(0, limit)) {
+    let lastMsg = null;
+    try {
+      // sync this specific conversation so we see the latest messages
+      // (top-level conversations.sync() only syncs the conversation
+      // LIST, not the messages inside each one).
+      await conv.sync();
+      // XMTP node-sdk expects { limit: number } here. Earlier versions
+      // documented BigInt; v4 does not — passing a BigInt crashes the
+      // napi bridge with "Failed to convert napi value BigInt into i64".
+      const msgs = await conv.messages({ limit: 5 });
+      // Take the most recent text message — skip group_updated frames
+      // (membership change events that XMTP interleaves with messages).
+      for (const m of msgs) {
+        if (m?.contentType?.typeId !== "group_updated") {
+          lastMsg = m;
+          break;
+        }
+      }
+      if (!lastMsg && msgs[0]) lastMsg = msgs[0];
+    } catch {
+      // ignore — empty conversation or sync hiccup
+    }
+    const id = conv.id.slice(0, 8) + "…";
+    const peer = (() => {
+      try {
+        return conv.peerInboxId
+          ? conv.peerInboxId.slice(0, 16) + "…"
+          : "?";
+      } catch {
+        return "?";
+      }
+    })();
+    out(
+      " " +
+        paint(c.cyan, id) +
+        "  " +
+        paint(c.dim, "peer:") +
+        " " +
+        peer,
+    );
+    if (lastMsg) {
+      const content = (() => {
+        try {
+          return typeof lastMsg.content === "string"
+            ? lastMsg.content
+            : JSON.stringify(lastMsg.content);
+        } catch {
+          return "(non-string content)";
+        }
+      })();
+      out(
+        "   " +
+          paint(c.dim, "last:") +
+          " " +
+          content.slice(0, 80).replace(/\n/g, " "),
+      );
+    }
+    out("");
+  }
+  out(paint(c.dim, `${convos.length} total · showing ${Math.min(limit, convos.length)}`));
+}
+
 // ---------- banner + REPL ----------
 
 function bannerLines() {
@@ -3341,6 +3687,8 @@ const REPL_COMMANDS = [
   "send",
   // partner integrations
   "aeon", "gitlawb", "bankr", "miroshark",
+  // P2P E2E messaging via XMTP
+  "xmtp",
   // daily-use + verify showpiece
   "verify", "portfolio", "trending", "token", "watchlist",
   "digest", "holders",
@@ -3422,6 +3770,11 @@ function replCompleter(line) {
   }
   if (head === "bankr" && tokens.length === 2) {
     const opts = ["status", "trade"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "xmtp" && tokens.length === 2) {
+    const opts = ["init", "status", "check", "dm", "inbox"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
@@ -3784,6 +4137,9 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "miroshark":
       await cmdMiroshark(rest);
+      break;
+    case "xmtp":
+      await cmdXmtp(rest);
       break;
     case "verify":
       await cmdVerify(rest);

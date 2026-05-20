@@ -67,18 +67,20 @@ Invoke-WebRequest -Uri $SourceUrl -OutFile $CliPath -UseBasicParsing
 $pkgJson = @'
 {
   "name": "signa-cli-runtime",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Local dep bag for the signa CLI. Do not edit by hand.",
   "type": "module",
   "dependencies": {
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "@xmtp/node-sdk": "^4.0.0"
   }
 }
 '@
 Set-Content -Path $PkgPath -Value $pkgJson -Encoding UTF8
 
-Write-Host "[2/4] installing viem into $SignaHome\node_modules (one-time, ~15s on windows)"
+Write-Host "[2/4] installing viem + xmtp into $SignaHome\node_modules (one-time, ~45s on windows)"
+Write-Host "      xmtp pulls native crypto bindings — first install is the slowest"
 Push-Location $SignaHome
 try {
     # --silent + --no-audit + --no-fund keep the output clean. --no-package-lock
