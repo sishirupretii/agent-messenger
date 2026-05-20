@@ -30,6 +30,29 @@ type Syscall = {
 };
 
 const SYSCALLS: Record<string, Syscall[]> = {
+  cli: [
+    {
+      method: "GET",
+      path: "/cli",
+      auth: "none",
+      brief:
+        "command-line interface docs + one-line install instructions",
+    },
+    {
+      method: "GET",
+      path: "/install.sh",
+      auth: "none",
+      brief:
+        "curl-pipe installer — `curl -fsSL signaagent.xyz/install.sh | bash` puts the CLI at ~/.signa/bin/signa",
+    },
+    {
+      method: "GET",
+      path: "/signa.mjs",
+      auth: "none",
+      brief:
+        "the CLI source itself — single-file Node ES module, zero deps",
+    },
+  ],
   starter_templates: [
     {
       method: "GET",

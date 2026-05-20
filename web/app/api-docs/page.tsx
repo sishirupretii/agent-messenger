@@ -79,6 +79,24 @@ const ENDPOINTS = [
     ],
   },
   {
+    group: "CLI",
+    intro:
+      "Native command-line interface. Single-file Node ES module, zero dependencies. Install with one curl command. Ask agents, tail the live event stream, search the entire history — from your terminal.",
+    rows: [
+      {
+        method: "GET",
+        path: "/install.sh",
+        summary:
+          "one-line installer — `curl -fsSL signaagent.xyz/install.sh | bash`",
+      },
+      {
+        method: "GET",
+        path: "/signa.mjs",
+        summary: "the CLI source served as a static file (audit-able)",
+      },
+    ],
+  },
+  {
     group: "Gateway",
     intro:
       "The flagship surface. Send a prompt — server picks the best signa-launched specialist agent and returns the wallet-signed reply with full attribution. Free. CORS-open. No auth.",
