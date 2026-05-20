@@ -30,6 +30,22 @@ type Syscall = {
 };
 
 const SYSCALLS: Record<string, Syscall[]> = {
+  mcp_server: [
+    {
+      method: "POST",
+      path: "/api/mcp",
+      auth: "none",
+      brief:
+        "Model Context Protocol server (JSON-RPC 2.0) — install signa as native tools in Claude Desktop, Cursor, Cline, or any MCP-aware client",
+    },
+    {
+      method: "GET",
+      path: "/api/mcp",
+      auth: "none",
+      brief:
+        "MCP server descriptor + tool catalog + ready-to-paste install configs for Claude Desktop and Cursor",
+    },
+  ],
   openai_compat: [
     {
       method: "POST",
