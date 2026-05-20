@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.9.0";
+const VERSION = "0.10.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -504,8 +504,10 @@ ${paint(c.bold, "Agents")}
                                  (encrypts the agent key server-side
                                   with AES-256-GCM — agent answers 24/7)
   agent disable-runtime <addr>   opt out (use --purge to wipe the key)
-  chat <addr|name>               interactive 1-on-1 wallet chat sub-shell
-                                 (:q or 'exit' to leave)
+  chat <addr|name>               interactive 1-on-1 chat sub-shell — auto-picks
+       [--transport=auto|xmtp|posts]   XMTP (E2E) if recipient is reachable,
+                                       falls back to wallet-signed posts.
+                                       (:q or 'exit' to leave)
 
 ${paint(c.bold, "Wallet")}
   login --new                    mint a fresh wallet + store the key
@@ -547,6 +549,8 @@ ${paint(c.bold, "XMTP — real P2P E2E messaging")}
   xmtp dm <to> "<msg>"            E2E-encrypted DM via XMTP — no signa
                                    server in the routing path
   xmtp inbox                      list your XMTP conversations
+  xmtp stream                     real-time stream of new XMTP messages
+                                   as they arrive (ctrl-c to stop)
 
 ${paint(c.bold, "Daily-use")}
   verify <interaction_id>        local cryptographic re-verification of a
@@ -2320,6 +2324,16 @@ function printChatMessage(msg, ctx) {
 }
 
 async function sendChatLine(ctx, line) {
+  // Transport-aware send. XMTP path goes peer-to-peer through the
+  // XMTP relay mesh; the posts path is the wallet-signed @-mention
+  // fallback for recipients without an XMTP identity.
+  if (ctx.transport === "xmtp") {
+    return _sendChatLineXmtp(ctx, line);
+  }
+  return _sendChatLinePosts(ctx, line);
+}
+
+async function _sendChatLinePosts(ctx, line) {
   const content = `@${ctx.their_address} ${line}`;
   const ts = Date.now();
   const { signature } = await signSignaPost({ content, ts });
@@ -2344,7 +2358,34 @@ async function sendChatLine(ctx, line) {
   }
 }
 
+async function _sendChatLineXmtp(ctx, line) {
+  if (!ctx.xmtp_dm) {
+    err(paint(c.red, "✗"), "xmtp dm not initialized — falling back to posts");
+    ctx.transport = "posts";
+    return _sendChatLinePosts(ctx, line);
+  }
+  await ctx.xmtp_dm.send(line);
+  // Display our own line immediately. We don't synthesize created_at
+  // from anything — printChatMessage will render with the current wall
+  // time as a hint.
+  printChatMessage(
+    {
+      author_address: ctx.my_address,
+      created_at: new Date().toISOString(),
+      content: line,
+    },
+    ctx,
+  );
+}
+
 async function pollAndShowChat(ctx) {
+  if (ctx.transport === "xmtp") {
+    return _pollChatXmtp(ctx);
+  }
+  return _pollChatPosts(ctx);
+}
+
+async function _pollChatPosts(ctx) {
   const msgs = await fetchChatThread(
     ctx.my_address,
     ctx.their_address,
@@ -2357,7 +2398,50 @@ async function pollAndShowChat(ctx) {
   }
 }
 
-async function enterChat(handleArg) {
+async function _pollChatXmtp(ctx) {
+  if (!ctx.xmtp_dm) return;
+  try {
+    await ctx.xmtp_dm.sync();
+    const msgs = await ctx.xmtp_dm.messages({ limit: 20 });
+    // XMTP returns newest-first by default in v4; we want chronological.
+    const ordered = msgs.slice().reverse();
+    for (const m of ordered) {
+      const sentNs = m.sentAtNs; // bigint nanoseconds
+      const sentIso = sentNs
+        ? new Date(Number(sentNs / 1_000_000n)).toISOString()
+        : new Date().toISOString();
+      if (sentIso <= ctx.last_seen_at) continue;
+      if (m.contentType?.typeId === "group_updated") continue;
+      // skip echoes of our own outbound (we already printed locally)
+      if (m.senderInboxId === ctx.my_xmtp_inbox) {
+        ctx.last_seen_at = sentIso;
+        continue;
+      }
+      const body = (() => {
+        try {
+          return typeof m.content === "string"
+            ? m.content
+            : JSON.stringify(m.content);
+        } catch {
+          return "(non-string content)";
+        }
+      })();
+      const ts = sentIso.slice(11, 16);
+      out(
+        paint(c.dim, ts) +
+          " " +
+          paint(c.cyan, ctx.their_handle + " ›") +
+          " " +
+          sanitizeForDisplay(body),
+      );
+      ctx.last_seen_at = sentIso;
+    }
+  } catch {
+    // ignore — next poll will retry
+  }
+}
+
+async function enterChat(handleArg, opts = {}) {
   const acc = await account();
   const them = await resolveChatHandle(handleArg);
   if (!them) {
@@ -2368,35 +2452,117 @@ async function enterChat(handleArg) {
   if (them.address === myAddr) {
     err(paint(c.yellow, "!"), "you can chat with yourself, but it's a small audience.");
   }
+
+  // ---- transport selection ----
+  // auto  : prefer xmtp if both wallets are reachable, fall back to posts
+  // xmtp  : force xmtp (bails if recipient isn't on XMTP)
+  // posts : force the wallet-signed @-mention path even if xmtp is available
+  const requested = opts.transport ?? "auto";
+  let transport = "posts";
+  let xClient = null;
+  let xDm = null;
+
+  if (requested === "xmtp" || requested === "auto") {
+    const m = await xmtp({ soft: requested === "auto" });
+    if (m) {
+      // Pre-flight reachability check before paying the cost of opening
+      // the local client — saves ~3-5s when the recipient isn't on XMTP.
+      const reachable = await xmtpReachable(them.address);
+      if (reachable) {
+        try {
+          xClient = await xmtpClient();
+          xDm = await xClient.conversations.newDmWithIdentifier({
+            identifier: them.address,
+            identifierKind: 0,
+          });
+          transport = "xmtp";
+        } catch (e) {
+          if (requested === "xmtp") {
+            err(paint(c.red, "✗"), `xmtp init failed: ${e?.message ?? e}`);
+            return null;
+          }
+          // auto: silent fallback
+        }
+      } else if (requested === "xmtp") {
+        err(
+          paint(c.red, "✗"),
+          `${them.address} has no XMTP V3 identity registered.`,
+        );
+        err(paint(c.dim, "  use --transport=posts or just 'chat' (auto) for the wallet-signed path"));
+        return null;
+      }
+    }
+  }
+
   const ctx = {
+    transport,
     their_address: them.address,
     their_handle: them.display,
     my_address: myAddr,
+    my_xmtp_inbox: xClient?.inboxId ?? null,
+    xmtp_client: xClient,
+    xmtp_dm: xDm,
     last_seen_at: "1970-01-01T00:00:00Z",
   };
+
   out("");
+  const transportTag =
+    transport === "xmtp"
+      ? paint(c.green, "[xmtp · E2E]")
+      : paint(c.yellow, "[posts · wallet-signed]");
   out(
     paint(c.bold, "chat") +
       " · " +
       paint(c.cyan, ctx.their_handle) +
       " " +
-      paint(c.dim, "(" + ctx.their_address + ")"),
+      paint(c.dim, "(" + ctx.their_address + ")") +
+      " " +
+      transportTag,
   );
+  if (transport === "xmtp") {
+    out(
+      paint(
+        c.dim,
+        "  delivery: XMTP relay mesh · libsignal double-ratchet · signa.xyz NOT in the path",
+      ),
+    );
+  } else {
+    out(
+      paint(
+        c.dim,
+        "  delivery: wallet-signed @-mention via /api/posts · server-verified signature",
+      ),
+    );
+  }
   out(paint(c.dim, "  type ':q' or 'exit' to leave · enter empty line to refresh"));
   out(paint(c.dim, "─".repeat(72)));
 
-  // Initial history pull
+  // Initial history pull (transport-specific)
   await pollAndShowChat(ctx);
   return ctx;
 }
 
 async function cmdChat(args, { fromRepl = false, replRl = null } = {}) {
-  const handle = args[0];
+  // Parse --transport=auto|xmtp|posts (default: auto)
+  let transport = "auto";
+  const positional = [];
+  for (const a of args) {
+    if (a.startsWith("--transport=")) transport = a.slice(12);
+    else positional.push(a);
+  }
+  const handle = positional[0];
   if (!handle) {
-    err("usage: chat <0x...|basename|ens>");
+    err("usage: chat <0x...|basename|ens> [--transport=auto|xmtp|posts]");
+    err("  auto  (default): use XMTP if recipient is reachable, else wallet-signed posts");
+    err("  xmtp           : force XMTP — fails if recipient has no XMTP identity");
+    err("  posts          : force the wallet-signed @-mention path");
     bail(2);
   }
-  const ctx = await enterChat(handle);
+  if (!["auto", "xmtp", "posts"].includes(transport)) {
+    err(`invalid --transport=${transport}. expected auto, xmtp, or posts.`);
+    bail(2);
+  }
+  const ctx = await enterChat(handle, { transport });
   if (!ctx) bail(1);
 
   if (fromRepl && replRl) {
@@ -3241,12 +3407,27 @@ async function cmdMiroshark(args) {
 // other signa command. Only `xmtp *` commands hard-require it.
 
 let _xmtp = null;
-async function xmtp() {
+let _xmtpLoadFailed = false;
+
+/**
+ * Load @xmtp/node-sdk on first use. By default this BAILS the command
+ * if the SDK can't be imported — e.g. native bindings missing on this
+ * platform, or the user installed v0.8 and never re-ran the installer.
+ *
+ * Pass { soft: true } to get a graceful null return instead. Used by
+ * the unified `chat` command, which falls back to the wallet-signed
+ * @-mention path when XMTP isn't available, instead of refusing to
+ * start.
+ */
+async function xmtp({ soft = false } = {}) {
   if (_xmtp) return _xmtp;
+  if (_xmtpLoadFailed && soft) return null;
   try {
     _xmtp = await import("@xmtp/node-sdk");
     return _xmtp;
   } catch (e) {
+    _xmtpLoadFailed = true;
+    if (soft) return null;
     err(paint(c.red, "✗"), "@xmtp/node-sdk is not available.");
     err(
       paint(c.dim, "  re-run the installer to pull it (and native bindings):"),
@@ -3335,13 +3516,108 @@ async function cmdXmtp(args) {
   if (sub === "dm") return cmdXmtpDm(args.slice(1));
   if (sub === "inbox") return cmdXmtpInbox(args.slice(1));
   if (sub === "check") return cmdXmtpCheck(args.slice(1));
+  if (sub === "stream" || sub === "watch") return cmdXmtpStream();
   err("usage:");
   err("  xmtp init                    one-time identity registration on the XMTP network");
   err("  xmtp status                  show your XMTP inbox id, installation count");
   err("  xmtp check <0x address>      can this address receive XMTP messages?");
   err("  xmtp dm <addr|name> <msg>    E2E-encrypted DM via XMTP (no signa in path)");
   err("  xmtp inbox                   list your XMTP conversations + latest message");
+  err("  xmtp stream                  real-time XMTP message stream (live)");
   bail(2);
+}
+
+/**
+ * Check whether an address has a registered XMTP V3 identity. Returns
+ * true | false. Soft — never throws, returns false on any error so the
+ * caller can default to the wallet-signed @-mention path.
+ */
+async function xmtpReachable(address) {
+  try {
+    const m = await xmtp({ soft: true });
+    if (!m) return false;
+    const xmtpEnv = env.SIGNA_XMTP_ENV || "production";
+    const result = await m.Client.canMessage(
+      [{ identifier: address.toLowerCase(), identifierKind: 0 }],
+      xmtpEnv,
+    );
+    return result.get(address.toLowerCase()) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Real-time stream of inbound XMTP messages. Uses the SDK's
+ * streamAllMessages() async iterator and pipes each new message to
+ * stdout as it arrives. Cooperative-stop via runLongRunning — ctrl-c
+ * ends the stream cleanly in both standalone and REPL contexts.
+ *
+ * Filters out messages we sent ourselves (sender_inbox_id === ours) +
+ * group_updated frames (membership change events) so the output is
+ * just the messages a human cares about.
+ */
+async function cmdXmtpStream() {
+  const client = await xmtpClient();
+  out("");
+  out(paint(c.bold, "xmtp stream"), paint(c.dim, "(real-time E2E messages)"));
+  out(paint(c.dim, "  press ctrl-c to stop"));
+  out("");
+  out(paint(c.dim, `[${new Date().toISOString().slice(11, 19)}] connected — waiting for messages…`));
+
+  // Ensure conversations list is current before streaming.
+  try {
+    await client.conversations.sync();
+  } catch {
+    // non-fatal — stream still works even without a pre-sync
+  }
+
+  const myInbox = client.inboxId;
+  await runLongRunning(async (stop) => {
+    const stream = await client.conversations.streamAllMessages();
+    stop.onstop = () => {
+      try {
+        stream.end();
+      } catch {
+        // ignore
+      }
+    };
+    try {
+      for await (const msg of stream) {
+        if (stop.stopped) break;
+        if (!msg) continue;
+        // skip our own outbound + system events
+        if (msg.senderInboxId === myInbox) continue;
+        if (msg.contentType?.typeId === "group_updated") continue;
+        const ts = new Date().toISOString().slice(11, 19);
+        const peer = msg.senderInboxId
+          ? msg.senderInboxId.slice(0, 16) + "…"
+          : "?";
+        const body = (() => {
+          try {
+            return typeof msg.content === "string"
+              ? msg.content
+              : JSON.stringify(msg.content);
+          } catch {
+            return "(non-string content)";
+          }
+        })();
+        out(
+          paint(c.dim, `[${ts}]`) +
+            " " +
+            paint(c.yellow, "XMTP") +
+            " from " +
+            paint(c.cyan, peer),
+        );
+        out("  " + sanitizeForDisplay(body));
+      }
+    } catch (e) {
+      if (!stop.stopped) {
+        err(paint(c.red, "stream error:"), e?.shortMessage ?? e?.message ?? String(e));
+      }
+    }
+  });
+  out(paint(c.dim, "xmtp stream stopped."));
 }
 
 async function cmdXmtpInit() {
@@ -3774,7 +4050,12 @@ function replCompleter(line) {
     return [hits.length ? hits : opts, last];
   }
   if (head === "xmtp" && tokens.length === 2) {
-    const opts = ["init", "status", "check", "dm", "inbox"];
+    const opts = ["init", "status", "check", "dm", "inbox", "stream"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "chat" && last.startsWith("--")) {
+    const opts = ["--transport=auto", "--transport=xmtp", "--transport=posts"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
