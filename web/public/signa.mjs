@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -493,6 +493,10 @@ ${paint(c.bold, "Agents")}
        [--tags=a,b]               agent's secp256k1 key generated locally,
        [--prompt="..."]           saved at ~/.signa/agents/<addr>.json (mode 600)
        [--prompt-file=path]
+  agent enable-runtime <addr>    opt in to 24/7 custodial runtime
+                                 (encrypts the agent key server-side
+                                  with AES-256-GCM — agent answers 24/7)
+  agent disable-runtime <addr>   opt out (use --purge to wipe the key)
   chat <addr|name>               interactive 1-on-1 wallet chat sub-shell
                                  (:q or 'exit' to leave)
 
@@ -539,6 +543,8 @@ ${paint(c.bold, "Daily-use")}
   watchlist                      list your bookmarked tokens
   watchlist add <0x token>       wallet-signed bookmark
   watchlist remove <0x token>    wallet-signed unbookmark
+  digest enable | disable        wallet-signed daily AI digest opt-in
+  holders <SYMBOL>               top SIGNA users holding a partner token
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -645,6 +651,15 @@ async function cmdStream(args) {
 
 async function cmdAgent(args) {
   const sub = args[0];
+  if (sub === "enable-runtime") {
+    return cmdAgentEnableRuntime(args.slice(1));
+  }
+  if (sub === "disable-runtime") {
+    return cmdAgentDisableRuntime(args.slice(1));
+  }
+  if (sub === "mine") {
+    return cmdAgents([]);
+  }
   if (sub === "ls") {
     const r = await httpJson("/api/agents");
     const agents = r.agents ?? [];
@@ -682,7 +697,12 @@ async function cmdAgent(args) {
     const r = await httpJson(`/api/agents/${addr.toLowerCase()}`);
     out(JSON.stringify(r.agent, null, 2));
   } else {
-    err("unknown subcommand. try: signa agent ls | signa agent get <addr>");
+    err("unknown subcommand. try one of:");
+    err("  agent ls                            list all agents on the network");
+    err("  agent get <addr>                    full profile of one agent");
+    err("  agent mine                          agents YOU launched");
+    err("  agent enable-runtime <addr>         opt in to 24/7 custodial runtime");
+    err("  agent disable-runtime <addr>        opt out (use --purge to wipe key)");
     bail(2);
   }
 }
@@ -1906,6 +1926,248 @@ async function cmdAgents(args) {
   out(paint(c.dim, "  → keys at " + AGENTS_DIR));
 }
 
+// ---------- agent runtime: hand custody of an agent key to SIGNA ----------
+//
+// The CLI default for `signa launch` keeps the agent's private key
+// LOCAL — the agent can only reply when the CLI process is up. To
+// make an agent answer 24/7, the user opts in via:
+//
+//   signa agent enable-runtime <0x agent_address>
+//
+// The CLI then:
+//   1. Loads the agent's private key from ~/.signa/agents/<addr>.json
+//   2. Signs the canonical `agent_runtime_enable` envelope WITH THE
+//      AGENT'S OWN KEY (proves the caller controls the agent address)
+//   3. POSTs the signed envelope + the raw 32-byte private key to
+//      /api/agents/<addr>/enable-runtime over HTTPS. The server
+//      re-derives the address from the key (proves the caller isn't
+//      just submitting random bytes), verifies the signature, then
+//      encrypts the key with AES-256-GCM via AGENT_RUNTIME_MASTER_KEY
+//      and stores the ciphertext. Plaintext is never persisted.
+//
+// SECURITY TRADE-OFF (made explicit to the user every time):
+//   This is the ONE point in the SIGNA design where the private key
+//   leaves the user's box. It's necessary for "always-on" agents.
+//   Users who want stricter custody can keep their agents local-only
+//   (the default) and accept that replies only happen while the CLI
+//   is running.
+//
+//   `disable-runtime` flips the flag off but keeps the encrypted key
+//   so re-enable doesn't require re-uploading. `disable-runtime --purge`
+//   wipes the ciphertext entirely.
+
+async function signSignaAgentRuntimeEnable({ agentAccount, address, ts }) {
+  const message = [
+    "SIGNA agent runtime enable v1",
+    `ts:${ts}`,
+    `address:${address}`,
+    "I authorize SIGNA to take custody of this agent's private key",
+    "and run an XMTP + LLM runtime on its behalf. I can disable",
+    "this at any time.",
+  ].join("\n");
+  const signature = await agentAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function _readPersistedAgent(addr) {
+  const rec = await loadAgentKey(addr);
+  if (!rec) {
+    err(paint(c.red, "✗"), `no local key for ${addr}`);
+    err(paint(c.dim, "  this CLI only has keys for agents launched from this box."));
+    err(paint(c.dim, "  if you launched it elsewhere, copy ~/.signa/agents/<addr>.json over."));
+    bail(1);
+  }
+  return rec;
+}
+
+async function cmdAgentEnableRuntime(args) {
+  const addr = (args[0] ?? "").toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(addr)) {
+    err("usage: agent enable-runtime <0x agent_address>");
+    bail(2);
+  }
+  const rec = await _readPersistedAgent(addr);
+
+  out("");
+  out(paint(c.yellow, "!"), "this hands the agent's private key to signa for custody.");
+  out(paint(c.dim, "  the key will be encrypted server-side (AES-256-GCM) and used"));
+  out(paint(c.dim, "  to run the agent 24/7. plaintext is never persisted."));
+  out(paint(c.dim, "  you can disable + purge at any time with"));
+  out(
+    paint(c.dim, "    signa agent disable-runtime " + addr + " --purge"),
+  );
+  out("");
+
+  const v = await viem();
+  const agentAccount = v.privateKeyToAccount(rec.private_key);
+  const ts = Date.now();
+  const { signature } = await signSignaAgentRuntimeEnable({
+    agentAccount,
+    address: addr,
+    ts,
+  });
+
+  const r = await httpJson(`/api/agents/${addr}/enable-runtime`, {
+    method: "POST",
+    body: JSON.stringify({
+      ts,
+      signature,
+      agent_private_key: rec.private_key,
+    }),
+  });
+  if (!r.ok) {
+    err(paint(c.red, "✗"), r.error ?? "enable failed");
+    bail(1);
+  }
+  out(paint(c.green, "✓"), "runtime enabled");
+  out(paint(c.dim, "agent".padEnd(14)), paint(c.cyan, r.agent?.address ?? addr));
+  out(paint(c.dim, "name".padEnd(14)), r.agent?.name ?? "");
+  out(paint(c.dim, "enabled_at".padEnd(14)), r.agent?.runtime_enabled_at ?? "");
+  out(paint(c.dim, "  the agent will now answer DMs and gateway routes 24/7."));
+}
+
+async function cmdAgentDisableRuntime(args) {
+  let purge = false;
+  const positional = [];
+  for (const a of args) {
+    if (a === "--purge") purge = true;
+    else positional.push(a);
+  }
+  const addr = (positional[0] ?? "").toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(addr)) {
+    err("usage: agent disable-runtime <0x agent_address> [--purge]");
+    bail(2);
+  }
+  const rec = await _readPersistedAgent(addr);
+
+  const v = await viem();
+  const agentAccount = v.privateKeyToAccount(rec.private_key);
+  const ts = Date.now();
+  // Re-uses the same envelope as enable — the act of signing AT ALL
+  // is the consent signal (server records the timestamp). Toggling
+  // off doesn't need a different message kind.
+  const { signature } = await signSignaAgentRuntimeEnable({
+    agentAccount,
+    address: addr,
+    ts,
+  });
+
+  const url = `/api/agents/${addr}/disable-runtime${purge ? "?purge=true" : ""}`;
+  const r = await httpJson(url, {
+    method: "POST",
+    body: JSON.stringify({ ts, signature }),
+  });
+  if (!r.ok) {
+    err(paint(c.red, "✗"), r.error ?? "disable failed");
+    bail(1);
+  }
+  out(paint(c.green, "✓"), purge ? "runtime disabled · custodial key PURGED" : "runtime disabled");
+  if (!purge) {
+    out(paint(c.dim, "  encrypted key kept server-side. re-enable without re-upload."));
+    out(paint(c.dim, "  use --purge to wipe it entirely."));
+  }
+}
+
+// ---------- digest: daily AI digest opt-in ----------
+
+async function signSignaDigestToggle({ address, enabled, ts }) {
+  const acc = await account();
+  const message = [
+    `SIGNA digest ${enabled ? "subscribe" : "unsubscribe"} v1`,
+    `ts:${ts}`,
+    `address:${address}`,
+    enabled
+      ? "I subscribe to a daily AI digest DM from SIGNA."
+      : "I unsubscribe from the daily SIGNA digest.",
+  ].join("\n");
+  const signature = await acc.viemAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function cmdDigest(args) {
+  const sub = args[0];
+  if (sub !== "enable" && sub !== "disable" && sub !== "on" && sub !== "off") {
+    err("usage:");
+    err("  digest enable        opt in to the daily AI digest DM");
+    err("  digest disable       opt out");
+    bail(2);
+  }
+  const enabled = sub === "enable" || sub === "on";
+  const acc = await account();
+  const addr = acc.address.toLowerCase();
+  const ts = Date.now();
+  const { signature } = await signSignaDigestToggle({
+    address: addr,
+    enabled,
+    ts,
+  });
+  const r = await httpJson("/api/me/digest", {
+    method: "POST",
+    body: JSON.stringify({ address: addr, enabled, ts, signature }),
+  });
+  if (!r.ok) {
+    err(paint(c.red, "✗"), r.error ?? "digest toggle failed");
+    bail(1);
+  }
+  out(
+    paint(c.green, "✓"),
+    enabled
+      ? "subscribed to the daily SIGNA digest"
+      : "unsubscribed from the SIGNA digest",
+  );
+  out(paint(c.dim, `  address: ${addr}`));
+  if (enabled) {
+    out(paint(c.dim, "  you'll get a wallet-signed digest post once per 24h."));
+  }
+}
+
+// ---------- holders: top SIGNA users holding a partner token ----------
+
+async function cmdHolders(args) {
+  const symbol = (args[0] ?? "").replace(/^\$/, "").toUpperCase();
+  if (!symbol) {
+    err("usage: holders <SYMBOL>");
+    err("  e.g.  holders BNKR | holders GITLAWB | holders MIROSHARK | holders USDC");
+    bail(2);
+  }
+  const r = await httpJson(`/api/holders/${symbol}`).catch(() => null);
+  if (!r?.ok) {
+    err(paint(c.red, "✗"), `no holders index for $${symbol}`);
+    err(paint(c.dim, "  supported partner tokens: BNKR, GITLAWB, MIROSHARK, USDC"));
+    bail(1);
+  }
+  const holders = r.holders ?? [];
+  if (holders.length === 0) {
+    out(paint(c.dim, `no SIGNA users currently hold $${symbol}.`));
+    return;
+  }
+  out("");
+  out(paint(c.bold, `top $${symbol} holders on SIGNA`), paint(c.dim, `(${holders.length} wallets)`));
+  out(paint(c.dim, "─".repeat(72)));
+  out(
+    paint(c.bold, " ADDRESS".padEnd(16)) +
+      paint(c.bold, " HANDLE".padEnd(28)) +
+      paint(c.bold, " BALANCE"),
+  );
+  out(paint(c.dim, "─".repeat(72)));
+  for (const h of holders.slice(0, 25)) {
+    const short = h.address.slice(0, 6) + "…" + h.address.slice(-4);
+    const handle = h.basename || h.ens_name || paint(c.dim, "—");
+    const bal =
+      typeof h.amount === "string" || typeof h.amount === "number"
+        ? String(h.amount).slice(0, 14)
+        : "?";
+    out(
+      " " +
+        paint(c.cyan, short.padEnd(15)) +
+        " " +
+        String(handle).padEnd(27) +
+        " " +
+        bal,
+    );
+  }
+}
+
 // ---------- chat: 1-on-1 wallet conversation ----------
 //
 // `signa chat <handle>` opens an interactive sub-shell where every line
@@ -3021,6 +3283,7 @@ const REPL_COMMANDS = [
   "aeon", "gitlawb", "bankr", "miroshark",
   // daily-use + verify showpiece
   "verify", "portfolio", "trending", "token", "watchlist",
+  "digest", "holders",
   "update",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
@@ -3046,7 +3309,12 @@ function replCompleter(line) {
   }
   const head = tokens[0];
   if (head === "agent" && tokens.length === 2) {
-    const opts = ["ls", "get"];
+    const opts = ["ls", "get", "mine", "enable-runtime", "disable-runtime"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "digest" && tokens.length === 2) {
+    const opts = ["enable", "disable"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
@@ -3471,6 +3739,12 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "watchlist":
       await cmdWatchlist(rest);
+      break;
+    case "digest":
+      await cmdDigest(rest);
+      break;
+    case "holders":
+      await cmdHolders(rest);
       break;
     case "search":
     case "s":
