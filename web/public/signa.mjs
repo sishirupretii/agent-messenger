@@ -30,19 +30,33 @@
 //   powershell -ExecutionPolicy Bypass -Command "iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex"   # windows (cmd or PowerShell)
 
 import { argv, env, stdout, stderr, stdin, exit } from "node:process";
-import { readFile, writeFile, mkdir, unlink, chmod, rename } from "node:fs/promises";
+import {
+  readFile,
+  writeFile,
+  mkdir,
+  unlink,
+  chmod,
+  rename,
+  readdir,
+} from "node:fs/promises";
 import { existsSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
 const KEYSTORE_PATH = join(SIGNA_HOME, "keystore.json");
 const HISTORY_PATH = join(SIGNA_HOME, "history");
+// One file per launched agent — agent's own private key. Mode 600. Listed
+// by `signa agents` / `agent mine`. Never transmitted off-box (the launch
+// envelope uploaded to the server contains only the agent's PUBLIC address
+// + signature, never the private key).
+const AGENTS_DIR = join(SIGNA_HOME, "agents");
 
 // Base mainnet — chain id 8453. RPC defaults to mainnet.base.org which
 // is public + rate-limited but works fine for low-volume CLI traffic.
@@ -135,6 +149,58 @@ async function deleteKeystore() {
     await unlink(KEYSTORE_PATH);
   } catch {
     // ignore — already gone
+  }
+}
+
+// ---------- agent keystores ----------
+//
+// Each launched agent gets its own private key, stored at
+//   ~/.signa/agents/<agent_address>.json   (mode 600)
+// Contains: { address, private_key, name, description, tags,
+//             launched_at (ISO), launched_by (user wallet) }
+// `signa agents` lists this directory. Agent ownership is purely
+// cryptographic — possessing the file ≡ controlling the agent's
+// wallet. Treat with the same care as keystore.json.
+
+function agentKeyPath(address) {
+  return join(AGENTS_DIR, `${address.toLowerCase()}.json`);
+}
+
+async function saveAgentKey(record) {
+  await mkdir(AGENTS_DIR, { recursive: true });
+  const path = agentKeyPath(record.address);
+  await writeFile(path, JSON.stringify(record, null, 2));
+  try {
+    await chmod(path, 0o600);
+  } catch {
+    // non-posix — silent
+  }
+}
+
+async function loadAgentKey(address) {
+  try {
+    return JSON.parse(await readFile(agentKeyPath(address), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function listAgentKeys() {
+  try {
+    const files = await readdir(AGENTS_DIR);
+    const records = [];
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const r = JSON.parse(await readFile(join(AGENTS_DIR, f), "utf8"));
+        if (r?.address && r?.private_key) records.push(r);
+      } catch {
+        // skip corrupt entries
+      }
+    }
+    return records;
+  } catch {
+    return [];
   }
 }
 
@@ -314,6 +380,47 @@ async function signSignaRegister({ address, basename, ens_name, ts }) {
 }
 
 /**
+ * Build + sign the canonical `agent_launch` envelope (from feed-types.ts).
+ * The signature is from the AGENT's wallet — proves the launcher controls
+ * the agent address. We don't ask the user's wallet here because the
+ * launchpad protocol commits to the agent address, not the launcher.
+ * (The launcher is identified separately via `launched_by` in the
+ * envelope, but not cryptographically required for v1.)
+ *
+ * Returns { signature, message, system_prompt_hash } so the caller can
+ * POST them and also display the hash if useful.
+ */
+async function signSignaAgentLaunch({
+  agentAccount,
+  agentAddress,
+  name,
+  description,
+  tags,
+  system_prompt,
+  avatar_seed,
+  launched_by,
+  ts,
+}) {
+  const system_prompt_hash = createHash("sha256")
+    .update(system_prompt ?? "", "utf8")
+    .digest("hex");
+  const tagLine = (tags ?? []).join(",");
+  const message = [
+    "SIGNA agent launch v1",
+    `ts:${ts}`,
+    `address:${agentAddress}`,
+    `name:${name}`,
+    `tags:${tagLine}`,
+    `launched_by:${launched_by}`,
+    `avatar_seed:${avatar_seed}`,
+    `system_prompt_sha256:${system_prompt_hash}`,
+    `desc:${description}`,
+  ].join("\n");
+  const signature = await agentAccount.signMessage({ message });
+  return { signature, message, system_prompt_hash };
+}
+
+/**
  * Idempotent registration. Safe to call on every login: server upserts
  * by address. Returns true on success — non-fatal on failure so a user
  * can still run read-only commands if the API is temporarily down.
@@ -359,12 +466,21 @@ ${paint(c.bold, "Read")}
   ask <prompt>                   ask any signa agent (auto-routes via the gateway)
   stream <prompt>                same, but streams the reply token-by-token
   agent ls | agent get <addr>    list launched agents | full agent profile
+  agents                         list agents YOU launched (local keystore)
   search <query>                 cross-network full-text search
   stats                          platform-wide counters
   live [--intent=facts|...]      tail the live network event stream
   feed [--limit=N]               global signa feed (top-level wallet-signed posts)
   thread <post_id>               a post + every reply, threaded
   profile <addr|name>            wallet profile · basename · ens · holdings
+
+${paint(c.bold, "Agents")}
+  launch <name> "<desc>"         wallet-signed launch of a new agent identity
+       [--tags=a,b]               agent's secp256k1 key generated locally,
+       [--prompt="..."]           saved at ~/.signa/agents/<addr>.json (mode 600)
+       [--prompt-file=path]
+  chat <addr|name>               interactive 1-on-1 wallet chat sub-shell
+                                 (:q or 'exit' to leave)
 
 ${paint(c.bold, "Wallet")}
   login --new                    mint a fresh wallet + store the key
@@ -1566,6 +1682,414 @@ async function cmdWatch() {
   out(paint(c.dim, "watch stopped."));
 }
 
+// ---------- launch: wallet-signed agent creation ----------
+//
+// `signa launch <name> "<description>" [--tags=a,b,c] [--prompt="..." | --prompt-file=path]`
+//
+// Generates a fresh secp256k1 wallet for the agent, signs the canonical
+// agent_launch envelope WITH THE AGENT'S OWN WALLET (proving control of
+// the address), POSTs to /api/agents/launch, then persists the agent's
+// private key to ~/.signa/agents/<address>.json (mode 600).
+//
+// The launcher (user's wallet) is recorded in `launched_by` for
+// attribution but is not the signer — server v1 only verifies the
+// agent's signature. The user's wallet is auto-registered on launch
+// so they can be found in directories / mentions.
+
+async function cmdLaunch(args) {
+  const v = await viem();
+
+  // ---- parse args ----
+  let tags = [];
+  let promptInline = null;
+  let promptFile = null;
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--tags=")) {
+      tags = a.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
+    } else if (a.startsWith("--prompt=")) {
+      promptInline = a.slice(9);
+    } else if (a === "--prompt") {
+      promptInline = args[++i] ?? "";
+    } else if (a.startsWith("--prompt-file=")) {
+      promptFile = a.slice(14);
+    } else if (a === "--prompt-file") {
+      promptFile = args[++i] ?? "";
+    } else {
+      positional.push(a);
+    }
+  }
+  if (positional.length < 2) {
+    err('usage: launch <name> "<description>" [--tags=a,b] [--prompt="..." | --prompt-file=path]');
+    err('  e.g.  launch defi-helper "answers $TOKEN questions on base" --tags=defi,base');
+    bail(2);
+  }
+  const name = positional[0].trim();
+  const description = positional.slice(1).join(" ").trim();
+
+  // ---- resolve system prompt ----
+  let systemPrompt = "";
+  if (promptInline != null) {
+    systemPrompt = promptInline;
+  } else if (promptFile) {
+    try {
+      systemPrompt = await readFile(promptFile, "utf8");
+    } catch (e) {
+      err(paint(c.red, "✗"), `couldn't read --prompt-file ${promptFile}: ${e?.message ?? e}`);
+      bail(1);
+    }
+  }
+  systemPrompt = systemPrompt.trim();
+
+  // ---- length checks mirror the server's MAX_AGENT_* constants ----
+  if (name.length === 0 || name.length > 50) {
+    err("name must be 1–50 chars");
+    bail(2);
+  }
+  if (description.length === 0 || description.length > 280) {
+    err("description must be 1–280 chars");
+    bail(2);
+  }
+  if (systemPrompt.length > 2000) {
+    err("system prompt > 2000 chars (use --prompt-file with shorter content)");
+    bail(2);
+  }
+  if (tags.length > 6) {
+    err("max 6 tags");
+    bail(2);
+  }
+
+  // ---- launcher identity ----
+  const launcher = await account();
+  const launchedBy = launcher.address.toLowerCase();
+
+  // ---- mint agent wallet ----
+  const agentPk = v.generatePrivateKey();
+  const agentAccount = v.privateKeyToAccount(agentPk);
+  const agentAddress = agentAccount.address.toLowerCase();
+  const avatarSeed = agentAddress;
+
+  // ---- save key FIRST so we never lose it even if the POST fails ----
+  const launchedAt = new Date().toISOString();
+  await saveAgentKey({
+    address: agentAddress,
+    private_key: agentPk,
+    name,
+    description,
+    tags,
+    launched_at: launchedAt,
+    launched_by: launchedBy,
+  });
+
+  // ---- sign with the agent's wallet ----
+  const ts = Date.now();
+  const { signature } = await signSignaAgentLaunch({
+    agentAccount,
+    agentAddress,
+    name,
+    description,
+    tags,
+    system_prompt: systemPrompt,
+    avatar_seed: avatarSeed,
+    launched_by: launchedBy,
+    ts,
+  });
+
+  // ---- POST ----
+  let res;
+  try {
+    res = await httpJson("/api/agents/launch", {
+      method: "POST",
+      body: JSON.stringify({
+        address: agentAddress,
+        name,
+        description,
+        tags,
+        system_prompt: systemPrompt,
+        avatar_seed: avatarSeed,
+        launched_by: launchedBy,
+        ts,
+        signature,
+      }),
+    });
+  } catch (e) {
+    err(paint(c.red, "✗"), `launch failed: ${e?.message ?? e}`);
+    err(
+      paint(c.dim, "  agent key was saved locally at"),
+      paint(c.cyan, agentKeyPath(agentAddress)),
+    );
+    err(paint(c.dim, "  re-run launch with the same name to retry"));
+    bail(1);
+  }
+
+  out("");
+  out(paint(c.green, "✓"), "agent launched");
+  out(paint(c.dim, "name".padEnd(14)), paint(c.bold, name));
+  out(paint(c.dim, "address".padEnd(14)), paint(c.cyan, agentAddress));
+  out(paint(c.dim, "tags".padEnd(14)), tags.join(", ") || paint(c.dim, "(none)"));
+  out(paint(c.dim, "launched_by".padEnd(14)), launchedBy);
+  out(paint(c.dim, "keystore".padEnd(14)), agentKeyPath(agentAddress));
+  out("");
+  out(paint(c.dim, "  next:"));
+  out(paint(c.dim, "    signa agent get " + agentAddress));
+  out(paint(c.dim, "    " + (await baseUrl()) + "/u/" + agentAddress));
+}
+
+async function cmdAgents(args) {
+  // List agents launched from THIS machine (i.e. whose private keys are
+  // in ~/.signa/agents/). We cross-check the server only on demand
+  // (`agents --remote` prints registry status for each).
+  const records = await listAgentKeys();
+  if (records.length === 0) {
+    out(paint(c.dim, "no agents launched from this machine."));
+    out(paint(c.dim, "  launch one with: signa launch <name> \"<description>\""));
+    return;
+  }
+  records.sort((a, b) => (a.launched_at < b.launched_at ? 1 : -1));
+  out("");
+  out(
+    paint(c.bold, " ADDRESS".padEnd(16)) +
+      paint(c.bold, " NAME".padEnd(28)) +
+      paint(c.bold, " LAUNCHED"),
+  );
+  out(paint(c.dim, "─".repeat(72)));
+  for (const r of records) {
+    const short = r.address.slice(0, 6) + "…" + r.address.slice(-4);
+    const when = (r.launched_at ?? "").slice(0, 10);
+    out(
+      " " +
+        paint(c.cyan, short.padEnd(15)) +
+        " " +
+        (r.name ?? "?").padEnd(27) +
+        " " +
+        paint(c.dim, when),
+    );
+  }
+  out("");
+  out(paint(c.dim, `${records.length} agent${records.length === 1 ? "" : "s"} controlled by this box`));
+  out(paint(c.dim, "  → keys at " + AGENTS_DIR));
+}
+
+// ---------- chat: 1-on-1 wallet conversation ----------
+//
+// `signa chat <handle>` opens an interactive sub-shell where every line
+// is signed + sent as a `@<their_addr> <msg>` post. We pull bidirectional
+// thread history on entry and on each input (lazy poll). Both sides see
+// the conversation through `signa inbox` / `signa watch`.
+//
+// REPL integration: when invoked from inside `signa` REPL, we set
+// CHAT_MODE (module-level) so the outer REPL's input loop routes each
+// line through chat-line semantics until the user types `:q`. Standalone
+// invocation (signa chat <h> from cmd) runs its own loop here.
+
+let CHAT_MODE = null; // { their_address, their_handle, my_address, last_seen_at }
+const CHAT_HISTORY_LIMIT = 20;
+const CHAT_POLL_TICKS = 4000;
+
+function sanitizeForDisplay(s) {
+  // Strip ANSI/control bytes from untrusted message content so a
+  // malicious post can't repaint our terminal.
+  return (s ?? "").replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "").replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+async function resolveChatHandle(handle) {
+  let addr = handle;
+  if (!/^0x[a-fA-F0-9]{40}$/.test(handle)) {
+    const r = await httpJson(
+      `/api/users/resolve?handle=${encodeURIComponent(handle)}`,
+    ).catch(() => null);
+    if (!r?.address) return null;
+    addr = r.address;
+  }
+  return { address: addr.toLowerCase(), display: handle };
+}
+
+async function fetchChatThread(myAddr, theirAddr, sinceIso) {
+  // Two queries: messages they sent that mention me, and messages I sent
+  // that mention them. Merge + sort by created_at asc. Server filters by
+  // mentions ILIKE — case-insensitive 0x match works since we lower-case
+  // both sides before storing.
+  const [theyToMe, meToThem] = await Promise.all([
+    httpJson(
+      `/api/posts?author=${theirAddr}&mentions=${myAddr}&limit=${CHAT_HISTORY_LIMIT}`,
+    ).catch(() => ({ posts: [] })),
+    httpJson(
+      `/api/posts?author=${myAddr}&mentions=${theirAddr}&limit=${CHAT_HISTORY_LIMIT}`,
+    ).catch(() => ({ posts: [] })),
+  ]);
+  const all = [...(theyToMe.posts ?? []), ...(meToThem.posts ?? [])]
+    .filter((p) => !sinceIso || p.created_at > sinceIso)
+    .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+  return all;
+}
+
+function stripMentionPrefix(content, theirAddr, myAddr) {
+  // Posts are stored with the @0x... mention inline. For display we hide
+  // the leading "@0x..." token from whichever side is the addressee, so
+  // the conversation reads naturally.
+  let s = content ?? "";
+  for (const addr of [theirAddr, myAddr]) {
+    const re = new RegExp(`^@${addr}\\s+`, "i");
+    s = s.replace(re, "");
+  }
+  return s;
+}
+
+function printChatMessage(msg, ctx) {
+  const mine = msg.author_address.toLowerCase() === ctx.my_address;
+  const who = mine ? "you" : ctx.their_handle;
+  const color = mine ? c.green : c.cyan;
+  const ts = new Date(msg.created_at).toISOString().slice(11, 16);
+  const body = sanitizeForDisplay(
+    stripMentionPrefix(msg.content, ctx.their_address, ctx.my_address),
+  );
+  out(paint(c.dim, ts) + " " + paint(color, who + " ›") + " " + body);
+}
+
+async function sendChatLine(ctx, line) {
+  const content = `@${ctx.their_address} ${line}`;
+  const ts = Date.now();
+  const { signature } = await signSignaPost({ content, ts });
+  const r = await postWithAutoRegister({
+    author_address: ctx.my_address,
+    content,
+    ts,
+    signature,
+  });
+  // Print our own line locally so the user sees confirmation without
+  // waiting for the next poll. The poll will dedupe via cursor.
+  if (r?.post) {
+    printChatMessage(
+      {
+        author_address: ctx.my_address,
+        created_at: r.post.created_at ?? new Date().toISOString(),
+        content,
+      },
+      ctx,
+    );
+    ctx.last_seen_at = r.post.created_at ?? new Date().toISOString();
+  }
+}
+
+async function pollAndShowChat(ctx) {
+  const msgs = await fetchChatThread(
+    ctx.my_address,
+    ctx.their_address,
+    ctx.last_seen_at,
+  );
+  for (const m of msgs) {
+    if (m.created_at <= ctx.last_seen_at) continue;
+    printChatMessage(m, ctx);
+    ctx.last_seen_at = m.created_at;
+  }
+}
+
+async function enterChat(handleArg) {
+  const acc = await account();
+  const them = await resolveChatHandle(handleArg);
+  if (!them) {
+    err(paint(c.red, "✗"), `couldn't resolve "${handleArg}"`);
+    return null;
+  }
+  const myAddr = acc.address.toLowerCase();
+  if (them.address === myAddr) {
+    err(paint(c.yellow, "!"), "you can chat with yourself, but it's a small audience.");
+  }
+  const ctx = {
+    their_address: them.address,
+    their_handle: them.display,
+    my_address: myAddr,
+    last_seen_at: "1970-01-01T00:00:00Z",
+  };
+  out("");
+  out(
+    paint(c.bold, "chat") +
+      " · " +
+      paint(c.cyan, ctx.their_handle) +
+      " " +
+      paint(c.dim, "(" + ctx.their_address + ")"),
+  );
+  out(paint(c.dim, "  type ':q' or 'exit' to leave · enter empty line to refresh"));
+  out(paint(c.dim, "─".repeat(72)));
+
+  // Initial history pull
+  await pollAndShowChat(ctx);
+  return ctx;
+}
+
+async function cmdChat(args, { fromRepl = false, replRl = null } = {}) {
+  const handle = args[0];
+  if (!handle) {
+    err("usage: chat <0x...|basename|ens>");
+    bail(2);
+  }
+  const ctx = await enterChat(handle);
+  if (!ctx) bail(1);
+
+  if (fromRepl && replRl) {
+    // Hand control back to the outer REPL — it'll route subsequent lines
+    // through the CHAT_MODE branch until the user types `:q`.
+    CHAT_MODE = ctx;
+    replRl.setPrompt(chatPromptFor(ctx));
+    return;
+  }
+
+  // Standalone — run our own line loop with a fresh readline.
+  const rl = createInterface({
+    input: stdin,
+    output: stdout,
+    prompt: chatPromptFor(ctx),
+    terminal: true,
+  });
+  await runLongRunning(async (stop) => {
+    stop.onstop = () => {
+      try { rl.close(); } catch {}
+    };
+    try {
+      rl.prompt();
+    } catch {
+      // already closed (e.g. non-TTY EOF on entry)
+    }
+    for await (const rawLine of rl) {
+      if (stop.stopped) break;
+      const line = rawLine.trim();
+      if (line === ":q" || line === "exit" || line === "quit") {
+        break;
+      }
+      if (line.length > 0) {
+        try {
+          await sendChatLine(ctx, line);
+        } catch (e) {
+          err(paint(c.red, "send failed:"), e?.message ?? e);
+        }
+      }
+      try {
+        await pollAndShowChat(ctx);
+      } catch {
+        // ignore — next poll will retry
+      }
+      if (stop.stopped) break;
+      // Guard prompt() — if stdin reached EOF (piped input, last line
+      // was the final one), readline auto-closes between our iteration
+      // exit and the next yield. Calling prompt() on a closing interface
+      // throws ERR_USE_AFTER_CLOSE.
+      try {
+        rl.prompt();
+      } catch {
+        break;
+      }
+    }
+  });
+  try { rl.close(); } catch {}
+  out(paint(c.dim, `left chat with ${ctx.their_handle}.`));
+}
+
+function chatPromptFor(ctx) {
+  if (NO_COLOR) return `@${ctx.their_handle} > `;
+  return `\x1b[38;2;91;141;239m@${ctx.their_handle} ›\x1b[0m `;
+}
+
 // ---------- banner + REPL ----------
 
 function bannerLines() {
@@ -1692,8 +2216,9 @@ function tokenize(input) {
  * here, plus the meta commands ('help', 'clear', 'exit', 'quit').
  */
 const REPL_COMMANDS = [
-  "ask", "stream", "agent", "search", "live", "stats",
+  "ask", "stream", "agent", "agents", "search", "live", "stats",
   "feed", "thread", "profile",
+  "launch", "chat",
   "login", "logout", "wallet", "whoami",
   "post", "dm", "reply", "like", "unlike", "rate",
   "inbox", "watch", "receipts",
@@ -2000,6 +2525,31 @@ async function startRepl() {
 
   for await (const rawLine of rl) {
     const line = rawLine.trim();
+
+    // ----- CHAT MODE: every line is a DM until `:q` / `exit` -----
+    if (CHAT_MODE) {
+      if (line === ":q" || line === "exit" || line === "quit") {
+        out(paint(c.dim, `left chat with ${CHAT_MODE.their_handle}.`));
+        CHAT_MODE = null;
+        rl.setPrompt(promptStr);
+        rl.prompt();
+        continue;
+      }
+      try {
+        if (line.length > 0) {
+          await sendChatLine(CHAT_MODE, line);
+        }
+        await pollAndShowChat(CHAT_MODE);
+      } catch (e) {
+        if (!(e && e.isBail)) {
+          err(paint(c.red, "chat error:"), e?.message ?? String(e));
+        }
+      }
+      rl.prompt();
+      continue;
+    }
+
+    // ----- NORMAL REPL DISPATCH -----
     if (!line) {
       rl.prompt();
       continue;
@@ -2030,7 +2580,9 @@ async function startRepl() {
     }
 
     try {
-      await dispatchCommand(tokens, { fromRepl: true });
+      // Pass rl so dispatchCommand can hand it to cmdChat when entering
+      // chat mode from inside the REPL.
+      await dispatchCommand(tokens, { fromRepl: true, replRl: rl });
     } catch (e) {
       // BailError is a controlled "command bailed out" — the handler
       // already printed its own usage / error message via err(). Show
@@ -2046,7 +2598,7 @@ async function startRepl() {
 
 // ---------- dispatch + main ----------
 
-async function dispatchCommand(args, { fromRepl = false } = {}) {
+async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
   const cmd = args[0];
   const rest = args.slice(1);
 
@@ -2059,6 +2611,15 @@ async function dispatchCommand(args, { fromRepl = false } = {}) {
       break;
     case "agent":
       await cmdAgent(rest);
+      break;
+    case "agents":
+      await cmdAgents(rest);
+      break;
+    case "launch":
+      await cmdLaunch(rest);
+      break;
+    case "chat":
+      await cmdChat(rest, { fromRepl, replRl });
       break;
     case "search":
     case "s":
