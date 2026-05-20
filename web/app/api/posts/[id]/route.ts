@@ -14,11 +14,16 @@ export async function GET(
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     return NextResponse.json({ error: "bad id" }, { status: 400 });
   }
+  // signature + signed_message are exposed so any third party can
+  // re-verify the post locally via viem.verifyMessage(...) without
+  // trusting signaagent.xyz. This is the basis for `signa verify <id>`
+  // and any independent client that wants to audit our DB.
   const { data, error } = await supabase
     .from("posts")
     .select(
       `
       id, author_address, content, parent_id, created_at,
+      signature, signed_message,
       author:users!posts_author_address_fkey(address, basename, ens_name, registered_at)
     `,
     )
