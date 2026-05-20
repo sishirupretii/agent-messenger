@@ -26,8 +26,8 @@
 //   to the server, which verifies before storing.
 //
 // Install:
-//   curl -fsSL https://www.signaagent.xyz/install.sh   | bash    # mac/linux
-//   iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex   # windows
+//   curl -fsSL https://www.signaagent.xyz/install.sh | bash             # mac/linux
+//   powershell -ExecutionPolicy Bypass -Command "iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex"   # windows (cmd or PowerShell)
 
 import { argv, env, stdout, stderr, stdin, exit } from "node:process";
 import { readFile, writeFile, mkdir, unlink, chmod, rename } from "node:fs/promises";
