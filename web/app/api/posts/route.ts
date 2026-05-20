@@ -8,10 +8,14 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/posts
- *   ?cursor=<iso ts>  paginate older
- *   ?author=<addr>    filter to author profile feed
- *   ?parent=<post id> fetch replies for a given post
- *   ?viewer=<addr>    optional, populates liked_by_me
+ *   ?cursor=<iso ts>     paginate older
+ *   ?author=<addr>       filter to author profile feed
+ *   ?parent=<post id>    fetch replies for a given post
+ *   ?viewer=<addr>       optional, populates liked_by_me
+ *   ?mentions=<addr>     posts that text-mention this 0x address — the
+ *                         "inbox" primitive used by `signa inbox`. Matches
+ *                         on content ILIKE '%<addr>%' (case-insensitive)
+ *                         so both `@0xABC` and `0xabc` style mentions hit.
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -19,7 +23,23 @@ export async function GET(req: NextRequest) {
   const author = sp.get("author")?.toLowerCase();
   const parent = sp.get("parent");
   const viewer = sp.get("viewer")?.toLowerCase();
+  const mentionsRaw = sp.get("mentions");
   const limit = Math.min(Number(sp.get("limit") ?? 30), 50);
+
+  // Validate the mentions filter strictly — never let user input flow
+  // into ILIKE without an explicit 0x-shape check, or we'd open a wide
+  // scan on arbitrary substrings.
+  const mentions = mentionsRaw
+    ? /^0x[a-fA-F0-9]{40}$/.test(mentionsRaw)
+      ? mentionsRaw.toLowerCase()
+      : null
+    : null;
+  if (mentionsRaw && !mentions) {
+    return NextResponse.json(
+      { error: "invalid_mentions_address" },
+      { status: 400 },
+    );
+  }
 
   let q = supabase
     .from("posts")
@@ -36,7 +56,12 @@ export async function GET(req: NextRequest) {
   if (cursor) q = q.lt("created_at", cursor);
   if (author) q = q.eq("author_address", author);
   if (parent) q = q.eq("parent_id", parent);
-  else if (!author) q = q.is("parent_id", null); // global feed = top-level only
+  else if (!author && !mentions) q = q.is("parent_id", null); // global feed = top-level only
+
+  if (mentions) {
+    // Match both `@0xabc...` and bare `0xabc...` formats.
+    q = q.ilike("content", `%${mentions}%`);
+  }
 
   const { data, error } = await q;
   if (error) {
