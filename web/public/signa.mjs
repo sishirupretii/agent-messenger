@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -660,6 +660,9 @@ async function cmdAgent(args) {
   if (sub === "mine") {
     return cmdAgents([]);
   }
+  if (sub === "find" || sub === "search") {
+    return cmdAgentFind(args.slice(1));
+  }
   if (sub === "ls") {
     const r = await httpJson("/api/agents");
     const agents = r.agents ?? [];
@@ -701,6 +704,7 @@ async function cmdAgent(args) {
     err("  agent ls                            list all agents on the network");
     err("  agent get <addr>                    full profile of one agent");
     err("  agent mine                          agents YOU launched");
+    err('  agent find "<query>"                search agents by name/desc/tag');
     err("  agent enable-runtime <addr>         opt in to 24/7 custodial runtime");
     err("  agent disable-runtime <addr>        opt out (use --purge to wipe key)");
     bail(2);
@@ -1924,6 +1928,62 @@ async function cmdAgents(args) {
   out("");
   out(paint(c.dim, `${records.length} agent${records.length === 1 ? "" : "s"} controlled by this box`));
   out(paint(c.dim, "  → keys at " + AGENTS_DIR));
+}
+
+/**
+ * Find launched agents on the signa network by name / description / tag.
+ *
+ * Server-side filter wiring isn't there yet (the /api/agents endpoint
+ * just returns the full list), so we fetch + filter client-side. With
+ * tens-to-low-hundreds of agents this is fine; we can revisit if the
+ * network outgrows that.
+ */
+async function cmdAgentFind(args) {
+  const query = args.join(" ").trim().toLowerCase();
+  if (!query) {
+    err('usage: agent find "<query>"');
+    err("  matches against name, description, and tags (case-insensitive)");
+    err("  e.g.  agent find defi   |   agent find swarm");
+    bail(2);
+  }
+  const r = await httpJson("/api/agents").catch(() => null);
+  const all = r?.agents ?? [];
+  const hits = all.filter((a) => {
+    const hay = [
+      a.name ?? "",
+      a.description ?? "",
+      (a.tags ?? []).join(" "),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(query);
+  });
+  out("");
+  if (hits.length === 0) {
+    out(paint(c.dim, `no agents match "${query}".`));
+    out(paint(c.dim, `  ${all.length} agents on the network · try a different term.`));
+    return;
+  }
+  out(paint(c.bold, `${hits.length} match${hits.length === 1 ? "" : "es"}`), paint(c.dim, `for "${query}"`));
+  out(paint(c.dim, "─".repeat(72)));
+  for (const a of hits.slice(0, 25)) {
+    const short = a.address.slice(0, 6) + "…" + a.address.slice(-4);
+    const tags = (a.tags ?? []).slice(0, 4).join(", ");
+    out(
+      " " +
+        paint(c.cyan, short.padEnd(14)) +
+        " " +
+        paint(c.bold, (a.name ?? "?").padEnd(28)),
+    );
+    if (a.description) {
+      out("   " + paint(c.dim, a.description.slice(0, 80)));
+    }
+    if (tags) out("   " + paint(c.dim, "tags: " + tags));
+    out("");
+  }
+  if (hits.length > 25) {
+    out(paint(c.dim, `  showing first 25 of ${hits.length}`));
+  }
 }
 
 // ---------- agent runtime: hand custody of an agent key to SIGNA ----------
@@ -3309,7 +3369,7 @@ function replCompleter(line) {
   }
   const head = tokens[0];
   if (head === "agent" && tokens.length === 2) {
-    const opts = ["ls", "get", "mine", "enable-runtime", "disable-runtime"];
+    const opts = ["ls", "get", "mine", "find", "enable-runtime", "disable-runtime"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
