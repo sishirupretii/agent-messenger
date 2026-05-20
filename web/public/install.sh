@@ -73,17 +73,19 @@ chmod 644 "$CLI_PATH"
 cat > "$PKG_PATH" <<'EOF'
 {
   "name": "signa-cli-runtime",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Local dep bag for the signa CLI. Don't edit by hand.",
   "type": "module",
   "dependencies": {
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "@xmtp/node-sdk": "^4.0.0"
   }
 }
 EOF
 
-echo "↓ installing viem into $SIGNA_HOME/node_modules (one-time, ~5s)"
+echo "↓ installing viem + @xmtp/node-sdk into $SIGNA_HOME/node_modules (one-time, ~30s)"
+echo "  (xmtp pulls native crypto bindings — first install is the slowest)"
 (
   cd "$SIGNA_HOME"
   # --silent keeps the installer output clean. --no-audit + --no-fund skip
