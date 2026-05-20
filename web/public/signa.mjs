@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.11.0";
+const VERSION = "0.12.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -87,6 +87,21 @@ const ERC8004_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 // gitlawb node (the network is multi-node by design).
 const GITLAWB_NODE = env.SIGNA_GITLAWB_NODE || "https://node.gitlawb.com";
 const GITLAWB_PLAYGROUND = "https://playground.gitlawb.app";
+
+// Seed list of known signa nodes the CLI ships with. Today this is just
+// signaagent.xyz — when other operators stand up nodes, they get added
+// here (or v0.13+ pulls them from an on-chain node registry on Base).
+//
+// The CLI can talk to any signa node by URL — this list is for
+// DISCOVERY only. SIGNA_BASE_URL env var or `signa node use <url>`
+// can point at anything.
+const SIGNA_SEED_NODES = [
+  {
+    name: "signaagent.xyz",
+    url: "https://www.signaagent.xyz",
+    note: "founder node",
+  },
+];
 
 // Make Node ES-module resolution include ~/.signa/node_modules so the
 // dynamic import("viem") below finds the installer-placed copy of viem
@@ -576,6 +591,13 @@ ${paint(c.bold, "Daily-use")}
   digest enable | disable        wallet-signed daily AI digest opt-in
   holders <SYMBOL>               top SIGNA users holding a partner token
 
+${paint(c.bold, "Federation — signa is multi-node")}
+  nodes                          list known signa nodes (status + version)
+  node info [url]                full node metadata (current if no url)
+  node ping [url]                reachability + latency probe
+  node verify <url>              validate a URL serves the signa protocol
+  node use <url>                 point this CLI at a different signa node
+
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
   config set <key> <value>       set a config value (e.g. baseUrl)
@@ -988,6 +1010,225 @@ async function cmdConfig(args) {
     err("usage: signa config set|get|clear [key] [value]");
     bail(2);
   }
+}
+
+// ---------- multi-node primitives (federable signa) ----------
+//
+// signa is designed to be federable. Today signaagent.xyz is the only
+// node, but the CLI is built for many. These commands let users:
+//   - discover known nodes (`signa nodes`)
+//   - inspect a node's metadata (`signa node info [url]`)
+//   - probe reachability + latency (`signa node ping [url]`)
+//   - validate that a URL actually serves the signa protocol
+//     (`signa node verify <url>`)
+//   - switch which node this CLI talks to (`signa node use <url>`)
+//
+// When other operators stand up signa nodes (open-source repo + Vercel
+// + Supabase + AGENT_RUNTIME_MASTER_KEY = ~10 min deploy), they fit in
+// here immediately. v0.13+ adds the cross-node sync worker + an on-
+// chain node registry contract on Base.
+
+/**
+ * Hit a node's /api/node/info endpoint with a strict timeout so a dead
+ * node doesn't hang the CLI. Returns null on any failure — caller
+ * decides what to display.
+ */
+async function fetchNodeInfo(baseUrl, { timeoutMs = 5000 } = {}) {
+  const url = baseUrl.replace(/\/$/, "") + "/api/node/info";
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, {
+      signal: ac.signal,
+      headers: { "user-agent": `signa-cli/${VERSION}` },
+    });
+    const elapsed = Date.now() - t0;
+    if (!res.ok) return { ok: false, status: res.status, elapsed_ms: elapsed };
+    const json = await res.json();
+    return { ok: true, elapsed_ms: elapsed, ...json };
+  } catch (e) {
+    return {
+      ok: false,
+      elapsed_ms: Date.now() - t0,
+      error: e?.message ?? String(e),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function cmdNodes() {
+  out("");
+  out(paint(c.bold, "known signa nodes"));
+  out(paint(c.dim, "─".repeat(72)));
+  out(
+    paint(c.bold, " NAME".padEnd(28)) +
+      paint(c.bold, " STATUS".padEnd(14)) +
+      paint(c.bold, " VERSION".padEnd(10)) +
+      paint(c.bold, " URL"),
+  );
+  out(paint(c.dim, "─".repeat(72)));
+
+  const current = (await baseUrl()).replace(/\/$/, "");
+  for (const seed of SIGNA_SEED_NODES) {
+    const info = await fetchNodeInfo(seed.url, { timeoutMs: 4000 });
+    const isCurrent = seed.url.replace(/\/$/, "") === current;
+    const name = (seed.name + (isCurrent ? " *" : "")).padEnd(27);
+    const status = info.ok
+      ? paint(c.green, "up · " + info.elapsed_ms + "ms")
+      : paint(c.red, "down");
+    const version = info.ok ? info.node?.version ?? "?" : "—";
+    out(
+      " " +
+        paint(c.cyan, name) +
+        " " +
+        status.padEnd(13) +
+        " " +
+        paint(c.dim, version.padEnd(9)) +
+        " " +
+        paint(c.dim, seed.url),
+    );
+  }
+  out("");
+  out(paint(c.dim, "  * = the node this cli is currently pointed at"));
+  out(paint(c.dim, "  point at a different node: ") + paint(c.cyan, "signa node use <url>"));
+}
+
+async function cmdNode(args) {
+  const sub = args[0];
+  if (sub === "info") {
+    const target = args[1] || (await baseUrl());
+    const info = await fetchNodeInfo(target, { timeoutMs: 6000 });
+    if (!info.ok) {
+      err(paint(c.red, "✗"), `${target} did not respond as a signa node`);
+      if (info.status) err(paint(c.dim, "  http " + info.status));
+      if (info.error) err(paint(c.dim, "  " + info.error));
+      bail(1);
+    }
+    const n = info.node ?? {};
+    out("");
+    out(paint(c.bold, "node info"), paint(c.dim, n.url ?? target));
+    out(paint(c.dim, "─".repeat(72)));
+    out(paint(c.dim, "name".padEnd(16)), paint(c.cyan, n.name ?? "?"));
+    out(paint(c.dim, "version".padEnd(16)), n.version ?? "?");
+    out(paint(c.dim, "protocol".padEnd(16)), `${info.protocol} v${info.protocol_version}`);
+    out(
+      paint(c.dim, "operator".padEnd(16)),
+      n.operator
+        ? paint(c.cyan, n.operator)
+        : paint(c.dim, "(not advertised)"),
+    );
+    out(paint(c.dim, "latency".padEnd(16)), `${info.elapsed_ms}ms`);
+    if (Array.isArray(n.capabilities)) {
+      out(paint(c.dim, "capabilities".padEnd(16)), n.capabilities.join(" · "));
+    }
+    if (n.stats) {
+      out(paint(c.dim, "stats".padEnd(16)));
+      for (const [k, v] of Object.entries(n.stats)) {
+        out("  " + paint(c.dim, k.padEnd(14)), paint(c.cyan, String(v)));
+      }
+    }
+    if (info.federation) {
+      out(
+        paint(c.dim, "federation".padEnd(16)),
+        info.federation.sync_enabled
+          ? paint(c.green, "sync enabled")
+          : paint(c.dim, "sync not yet enabled"),
+      );
+    }
+    return;
+  }
+
+  if (sub === "ping") {
+    const target = args[1] || (await baseUrl());
+    out(paint(c.dim, `pinging ${target}…`));
+    const info = await fetchNodeInfo(target, { timeoutMs: 6000 });
+    if (info.ok) {
+      out(
+        paint(c.green, "✓"),
+        `${target} is up · ${info.elapsed_ms}ms · v${info.node?.version ?? "?"}`,
+      );
+    } else {
+      out(paint(c.red, "✗"), `${target} is unreachable`);
+      if (info.status) out(paint(c.dim, "  http " + info.status));
+      if (info.error) out(paint(c.dim, "  " + info.error));
+      bail(1);
+    }
+    return;
+  }
+
+  if (sub === "verify") {
+    const target = args[1];
+    if (!target) {
+      err("usage: node verify <url>");
+      bail(2);
+    }
+    out(paint(c.dim, `verifying ${target} serves the signa protocol…`));
+    const info = await fetchNodeInfo(target, { timeoutMs: 6000 });
+    if (!info.ok) {
+      err(paint(c.red, "✗"), `${target} is not reachable: ${info.error ?? "http " + info.status}`);
+      bail(1);
+    }
+    const checks = {
+      "protocol === 'signa'": info.protocol === "signa",
+      "node.name present": typeof info.node?.name === "string" && info.node.name.length > 0,
+      "node.version present": typeof info.node?.version === "string",
+      "capabilities advertised": Array.isArray(info.node?.capabilities) && info.node.capabilities.length > 0,
+    };
+    out("");
+    out(paint(c.bold, "signa-protocol check"));
+    out(paint(c.dim, "─".repeat(56)));
+    let allOk = true;
+    for (const [name, ok] of Object.entries(checks)) {
+      out(
+        (ok ? paint(c.green, " ✓") : paint(c.red, " ✗")) +
+          " " +
+          name,
+      );
+      if (!ok) allOk = false;
+    }
+    out("");
+    if (allOk) {
+      out(paint(c.green, "✓"), "this URL serves the signa protocol.");
+      out(paint(c.dim, "  point at it with:"), paint(c.cyan, "signa node use " + target));
+    } else {
+      out(paint(c.yellow, "!"), "URL responded but did not advertise the signa protocol.");
+      bail(1);
+    }
+    return;
+  }
+
+  if (sub === "use") {
+    const target = args[1];
+    if (!target || !/^https?:\/\//.test(target)) {
+      err("usage: node use <https://...|http://...>");
+      bail(2);
+    }
+    // Strict verification before we re-point the CLI so users don't
+    // silently lock themselves into a broken node.
+    const info = await fetchNodeInfo(target, { timeoutMs: 6000 });
+    if (!info.ok || info.protocol !== "signa") {
+      err(paint(c.red, "✗"), `${target} does not look like a signa node — refusing to use it.`);
+      err(paint(c.dim, "  run 'signa node verify " + target + "' for details"));
+      bail(1);
+    }
+    const cfg = await loadConfig();
+    cfg.baseUrl = target.replace(/\/$/, "");
+    await saveConfig(cfg);
+    out(paint(c.green, "✓"), "cli now points at", paint(c.cyan, cfg.baseUrl));
+    out(paint(c.dim, "  node:"), info.node?.name ?? "?", paint(c.dim, "v" + (info.node?.version ?? "?")));
+    out(paint(c.dim, "  revert with:"), paint(c.cyan, "signa config set baseUrl https://www.signaagent.xyz"));
+    return;
+  }
+
+  err("usage:");
+  err("  signa nodes                  list all known signa nodes");
+  err("  signa node info [url]        full node metadata (current if no url)");
+  err("  signa node ping [url]        reachability + latency probe");
+  err("  signa node verify <url>      validate URL serves the signa protocol");
+  err("  signa node use <url>         point this cli at a different node");
+  bail(2);
 }
 
 // ---------- wallet commands ----------
@@ -4183,6 +4424,7 @@ const REPL_COMMANDS = [
   "verify", "portfolio", "trending", "token", "watchlist",
   "digest", "holders",
   "update",
+  "nodes", "node",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
 ];
@@ -4246,6 +4488,11 @@ function replCompleter(line) {
   }
   if (head === "update" && last.startsWith("--")) {
     return [["--check"], last];
+  }
+  if (head === "node" && tokens.length === 2) {
+    const opts = ["info", "ping", "verify", "use"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
   }
   // partner subcommands
   if (head === "aeon" && tokens.length === 2) {
@@ -4728,6 +4975,12 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "update":
       await cmdUpdate(rest);
+      break;
+    case "nodes":
+      await cmdNodes();
+      break;
+    case "node":
+      await cmdNode(rest);
       break;
     case "version":
     case "-v":
