@@ -33,6 +33,7 @@ export async function GET() {
   const publicUrl =
     process.env.NEXT_PUBLIC_SIGNA_BASE_URL ||
     "https://www.signaagent.xyz";
+  const nodeVersion = "0.13.0";
 
   // The full set of API surfaces this node serves. Other implementations
   // can advertise a subset (e.g. a read-only mirror won't have
@@ -49,6 +50,47 @@ export async function GET() {
     "verify",
     "xmtp-indexer",
   ];
+
+  // ---- operator attestation (v0.13) ----
+  //
+  // Optional. When the operator has pre-signed the canonical descriptor
+  // locally (via `signa node sign-attestation` on their dev machine) and
+  // pasted the signature + timestamp into env, we serve it here so any
+  // CLI can re-verify cryptographically that the wallet at `operator`
+  // actually attested THIS node configuration.
+  //
+  // The server NEVER holds the operator's private key. Signing happens
+  // off-server. We just publish the signature alongside the deterministic
+  // preimage anyone can reconstruct from this same response.
+  const attSig = (process.env.SIGNA_NODE_ATTESTATION_SIGNATURE ?? "").trim();
+  const attTs = Number(process.env.SIGNA_NODE_ATTESTED_AT ?? "0") || 0;
+  let attestation: {
+    signature: string;
+    signed_message: string;
+    attested_at: number;
+  } | null = null;
+  if (
+    operator &&
+    /^0x[a-f0-9]{40}$/.test(operator) &&
+    /^0x[a-fA-F0-9]{130,132}$/.test(attSig) &&
+    attTs > 0
+  ) {
+    const sortedCaps = [...capabilities].sort().join(",");
+    const preimage = [
+      "SIGNA node v1",
+      `url:${publicUrl.replace(/\/$/, "")}`,
+      `name:${name}`,
+      `operator:${operator}`,
+      `version:${nodeVersion}`,
+      `capabilities:${sortedCaps}`,
+      `attested_at:${attTs}`,
+    ].join("\n");
+    attestation = {
+      signature: attSig,
+      signed_message: preimage,
+      attested_at: attTs,
+    };
+  }
 
   // Best-effort stats snapshot. Cached at the CDN by Vercel for the
   // dynamic-revalidate window; we still go to the DB on every call
@@ -85,9 +127,10 @@ export async function GET() {
       name,
       url: publicUrl,
       operator: operator || null,
-      version: "0.12.0",
+      version: nodeVersion,
       capabilities,
       stats,
+      attestation, // null if operator hasn't signed yet, or sig+preimage if they have
     },
     federation: {
       // v1: no cross-node sync yet. The schema is here so clients can
@@ -96,6 +139,6 @@ export async function GET() {
       seed_peers: [],
     },
     notes:
-      "signa nodes are federable. point your CLI at any node with `signa node use <url>`. signatures verify the same on every node — the wallet is the source of truth.",
+      "signa nodes are federable. point your CLI at any node with `signa node use <url>`. signatures verify the same on every node — the wallet is the source of truth. operator attestation is optional but recommended — see `signa node sign-attestation`.",
   });
 }
