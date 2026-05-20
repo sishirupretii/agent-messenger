@@ -179,10 +179,37 @@ function classify(message: string): Intent {
   return "chat";
 }
 
+// v0.14 — per-request LLM token accumulator. Each Groq call adds its
+// usage.prompt_tokens + usage.completion_tokens here so we can persist
+// the total cost of an interaction to agent_interactions.tokens_*.
+// /api/metrics aggregates these into a public throughput dashboard.
+type UsageAcc = {
+  tokens_in: number;
+  tokens_out: number;
+  model: string | null;
+};
+
+function newUsageAcc(): UsageAcc {
+  return { tokens_in: 0, tokens_out: 0, model: null };
+}
+
+function accUsage(
+  acc: UsageAcc,
+  r: { usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string } | null,
+) {
+  if (!r) return;
+  if (r.usage) {
+    acc.tokens_in += r.usage.prompt_tokens ?? 0;
+    acc.tokens_out += r.usage.completion_tokens ?? 0;
+  }
+  if (r.model && !acc.model) acc.model = r.model;
+}
+
 async function llmClassify(
   client: Groq,
   message: string,
   hint: Intent,
+  usage?: UsageAcc,
 ): Promise<Intent> {
   try {
     const sys =
@@ -203,6 +230,7 @@ async function llmClassify(
         { role: "user", content: message },
       ],
     });
+    if (usage) accUsage(usage, r);
     const tok = (r.choices?.[0]?.message?.content ?? "")
       .trim()
       .toLowerCase()
@@ -529,6 +557,7 @@ async function synthesize(args: {
   message: string;
   context: string;
   from: string | null;
+  usage?: UsageAcc;
 }): Promise<string> {
   if (!args.client) {
     return templatedReply(args);
@@ -574,6 +603,7 @@ async function synthesize(args: {
       { role: "user", content: user },
     ],
   });
+  if (args.usage) accUsage(args.usage, r);
   const text = r.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error("groq returned empty completion");
   return text;
@@ -720,8 +750,10 @@ export async function POST(
   const groq = groqKey ? new Groq({ apiKey: groqKey }) : null;
 
   // 1) Classify — LLM-refined if available, lexical-only otherwise.
+  // Token usage accumulates across all LLM calls in this request.
+  const usage = newUsageAcc();
   const lexHint = classify(message);
-  const intent = groq ? await llmClassify(groq, message, lexHint) : lexHint;
+  const intent = groq ? await llmClassify(groq, message, lexHint, usage) : lexHint;
 
   // 2) Route to tool
   let toolCtx = "";
@@ -809,6 +841,7 @@ export async function POST(
       message,
       context: toolCtx,
       from,
+      usage,
     });
   } catch (e) {
     // Persist the error trail so we can debug, return a graceful message.
@@ -822,6 +855,10 @@ export async function POST(
         intent: "error",
         sources,
         signed: false,
+        tokens_in: usage.tokens_in,
+        tokens_out: usage.tokens_out,
+        tokens_total: usage.tokens_in + usage.tokens_out,
+        model: usage.model,
       })
       .select("id")
       .single();
@@ -880,6 +917,10 @@ export async function POST(
       signed,
       signature,
       signed_message: signedMessage,
+      tokens_in: usage.tokens_in,
+      tokens_out: usage.tokens_out,
+      tokens_total: usage.tokens_in + usage.tokens_out,
+      model: usage.model,
     })
     .select("id")
     .single();
