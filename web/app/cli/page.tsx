@@ -15,7 +15,11 @@ import { Footer } from "@/components/shell/Footer";
  */
 
 const INSTALL_UNIX = `curl -fsSL https://www.signaagent.xyz/install.sh | bash`;
-const INSTALL_WINDOWS = `iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex`;
+// Universal Windows one-liner: works from cmd.exe AND PowerShell AND
+// Windows Terminal. cmd doesn't have `iwr` / `iex` built-in (those are
+// PowerShell cmdlets), so we invoke powershell.exe explicitly. -Bypass
+// avoids the unsigned-script policy refusal on default Windows installs.
+const INSTALL_WINDOWS = `powershell -ExecutionPolicy Bypass -Command "iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex"`;
 
 type Cmd = { cmd: string; desc: string; example?: string };
 
@@ -221,8 +225,13 @@ export default function CliPage() {
                 </>
               ) : (
                 <>
-                  Run in <strong>PowerShell</strong> (not cmd). Requires
-                  Node 18+ and npm. Installs to{" "}
+                  Works in <strong>cmd</strong>, <strong>PowerShell</strong>,
+                  and <strong>Windows Terminal</strong> — the{" "}
+                  <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
+                    powershell -Command
+                  </code>{" "}
+                  wrapper bridges to PowerShell from any Windows shell.
+                  Requires Node 18+ and npm. Installs to{" "}
                   <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
                     %USERPROFILE%\.signa\bin\signa.cmd
                   </code>{" "}
