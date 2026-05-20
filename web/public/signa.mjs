@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -65,6 +65,15 @@ const BASE_CHAIN_ID = 8453;
 
 // USDC on Base — official Coinbase USDC contract.
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+
+// Ethereum mainnet RPC for ERC-8004 (aeon) reads. Default publicnode is
+// rate-limited but works fine for CLI-volume traffic. Override with
+// SIGNA_ETH_RPC env to point at Alchemy / Infura for heavier use.
+const ETH_RPC = env.SIGNA_ETH_RPC || "https://ethereum.publicnode.com";
+
+// ERC-8004 Identity Registry on Ethereum mainnet (aeon protocol).
+// Reference: eips.ethereum.org/EIPS/eip-8004 and 8004.org.
+const ERC8004_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 
 // Make Node ES-module resolution include ~/.signa/node_modules so the
 // dynamic import("viem") below finds the installer-placed copy of viem
@@ -221,7 +230,12 @@ async function viem() {
       import("viem"),
       import("viem/chains"),
     ]);
-    _viem = { ...accounts, ...core, base: chains.base };
+    _viem = {
+      ...accounts,
+      ...core,
+      base: chains.base,
+      mainnet: chains.mainnet,
+    };
     return _viem;
   } catch (e) {
     err(
@@ -504,6 +518,16 @@ ${paint(c.bold, "Tokens")}
   send <to> <amount> <token>     build + send an EIP-1559 tx on Base mainnet
                                  token: ETH | USDC | 0x<erc20_addr>
                                  --dry  to print the tx without broadcasting
+
+${paint(c.bold, "Partner ecosystem")}
+  aeon resolve <token_id>        ERC-8004 lookup on Ethereum mainnet
+  aeon balance <0x address>      ERC-8004 tokens held by an address
+  gitlawb link <did>             wallet-signed bind of a gitlawb DID
+  gitlawb unlink                 clear the DID binding
+  gitlawb status                 show your current linked DID
+  bankr status                   show whether your bankr key is connected
+  bankr trade "<prompt>"         wallet-signed natural-language trade
+  miroshark <scenario>           swarm simulation via the gateway
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -2090,6 +2114,419 @@ function chatPromptFor(ctx) {
   return `\x1b[38;2;91;141;239m@${ctx.their_handle} ›\x1b[0m `;
 }
 
+// ---------- partner integrations ----------
+//
+// CLI surface for the four partner stacks SIGNA composes with:
+//   aeon       — ERC-8004 Identity Registry on Ethereum mainnet
+//                  read-only · pure on-chain · no signa server in the path
+//   gitlawb    — DID-bound decentralized git
+//                  wallet-signed link/unlink against /api/users/link-gitlawb
+//   bankr      — agent-token trading via the user's Bankr Agent key
+//                  wallet-signed trade execution against /api/me/trade
+//                  (connect is intentionally web-only — see SECURITY note)
+//   miroshark  — swarm-intelligence simulation
+//                  gateway-routed via the swarm intent
+//
+// SECURITY: `signa bankr connect <api_key>` is NOT exposed in the CLI.
+// API keys pasted on a command line land in shell history (~/.bash_history,
+// ~/.zsh_history, cmd doskey buffer). That's an unacceptable persistence
+// path for a credential the user expects to be encrypted. Users connect
+// the key on the website (where a password input handles it); the CLI
+// inherits the connection via wallet signature.
+
+// ----- aeon (ERC-8004) -----
+
+const ERC8004_ABI = [
+  {
+    type: "function",
+    name: "agentURI",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "string" }],
+  },
+  {
+    type: "function",
+    name: "ownerOf",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+];
+
+async function ethClient() {
+  const vi = await viem();
+  return vi.createPublicClient({
+    chain: vi.mainnet ?? (await import("viem/chains")).mainnet,
+    transport: vi.http(ETH_RPC),
+  });
+}
+
+async function fetchAgentRegistration(uri) {
+  if (!uri) return null;
+  try {
+    if (uri.startsWith("data:")) {
+      const comma = uri.indexOf(",");
+      if (comma < 0) return null;
+      const meta = uri.slice(5, comma);
+      const payload = uri.slice(comma + 1);
+      const decoded = meta.includes("base64")
+        ? Buffer.from(payload, "base64").toString("utf8")
+        : decodeURIComponent(payload);
+      return JSON.parse(decoded);
+    }
+    if (uri.startsWith("ipfs://")) {
+      const cid = uri.slice(7).replace(/^ipfs\//, "");
+      const res = await fetch(`https://ipfs.io/ipfs/${cid}`);
+      if (!res.ok) return null;
+      return await res.json();
+    }
+    const res = await fetch(uri);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function cmdAeon(args) {
+  const sub = args[0];
+  if (sub === "resolve") {
+    const idArg = args[1];
+    if (!idArg) {
+      err("usage: aeon resolve <token_id>");
+      bail(2);
+    }
+    let tokenId;
+    try {
+      tokenId = BigInt(idArg);
+    } catch {
+      err("token_id must be an integer");
+      bail(2);
+    }
+    const client = await ethClient();
+    let uri;
+    let owner;
+    try {
+      [uri, owner] = await Promise.all([
+        client.readContract({
+          address: ERC8004_REGISTRY,
+          abi: ERC8004_ABI,
+          functionName: "agentURI",
+          args: [tokenId],
+        }),
+        client.readContract({
+          address: ERC8004_REGISTRY,
+          abi: ERC8004_ABI,
+          functionName: "ownerOf",
+          args: [tokenId],
+        }),
+      ]);
+    } catch (e) {
+      err(paint(c.red, "✗"), `token #${idArg} not found or RPC failed: ${e?.shortMessage ?? e?.message ?? e}`);
+      bail(1);
+    }
+    const registration = await fetchAgentRegistration(uri);
+    out("");
+    out(paint(c.bold, "ERC-8004 agent #" + idArg.toString()));
+    out(paint(c.dim, "─".repeat(48)));
+    out(paint(c.dim, "owner".padEnd(14)), paint(c.cyan, owner));
+    out(paint(c.dim, "registry".padEnd(14)), ERC8004_REGISTRY);
+    out(paint(c.dim, "uri".padEnd(14)), uri);
+    if (registration) {
+      if (registration.name) out(paint(c.dim, "name".padEnd(14)), paint(c.bold, String(registration.name)));
+      if (registration.description) out(paint(c.dim, "desc".padEnd(14)), String(registration.description));
+      if (Array.isArray(registration.services) && registration.services.length > 0) {
+        out(paint(c.dim, "services".padEnd(14)));
+        for (const s of registration.services.slice(0, 4)) {
+          out(paint(c.dim, "  • " + (s.name ?? "?")), paint(c.dim, s.endpoint ?? ""));
+        }
+      }
+      if (registration.x402Support === true) {
+        out(paint(c.dim, "x402".padEnd(14)), paint(c.green, "supported"));
+      }
+    } else {
+      out(paint(c.yellow, "  (couldn't resolve metadata from URI)"));
+    }
+    out("");
+    out(paint(c.dim, "  source: ethereum mainnet · no signa server in the path"));
+    return;
+  }
+  if (sub === "balance") {
+    const addr = args[1];
+    if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+      err("usage: aeon balance <0x address>");
+      bail(2);
+    }
+    const client = await ethClient();
+    let bal;
+    try {
+      bal = await client.readContract({
+        address: ERC8004_REGISTRY,
+        abi: ERC8004_ABI,
+        functionName: "balanceOf",
+        args: [addr],
+      });
+    } catch (e) {
+      err(paint(c.red, "✗"), `read failed: ${e?.shortMessage ?? e?.message ?? e}`);
+      bail(1);
+    }
+    out("");
+    out(paint(c.bold, "ERC-8004 token balance"));
+    out(paint(c.dim, "─".repeat(48)));
+    out(paint(c.dim, "address".padEnd(14)), paint(c.cyan, addr));
+    out(paint(c.dim, "registered".padEnd(14)), paint(c.bold, String(bal)) + " " + paint(c.dim, "agent token(s)"));
+    out(paint(c.dim, "registry".padEnd(14)), ERC8004_REGISTRY);
+    out("");
+    return;
+  }
+  err("usage:");
+  err("  aeon resolve <token_id>     fetch ERC-8004 agent metadata from chain");
+  err("  aeon balance <0x address>   count ERC-8004 tokens owned");
+  bail(2);
+}
+
+// ----- gitlawb -----
+
+async function signSignaLinkGitlawb({ address, gitlawb_did, ts }) {
+  // Mirrors buildMessageToSign("link_gitlawb") on the server.
+  const acc = await account();
+  const message = [
+    "SIGNA link gitlawb v1",
+    `ts:${ts}`,
+    `address:${address}`,
+    `gitlawb_did:${gitlawb_did}`,
+    "I attach this gitlawb DID to my SIGNA profile.",
+  ].join("\n");
+  const signature = await acc.viemAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function cmdGitlawb(args) {
+  const sub = args[0];
+  const acc = await account();
+  const addr = acc.address.toLowerCase();
+
+  if (sub === "link") {
+    const did = (args[1] ?? "").trim();
+    if (!did || !/^did:(key|gitlawb):[a-zA-Z0-9_-]+$/.test(did)) {
+      err("usage: gitlawb link <did:key:z6Mk... | did:gitlawb:<slug>>");
+      bail(2);
+    }
+    const ts = Date.now();
+    const { signature } = await signSignaLinkGitlawb({
+      address: addr,
+      gitlawb_did: did,
+      ts,
+    });
+    const r = await httpJson("/api/users/link-gitlawb", {
+      method: "POST",
+      body: JSON.stringify({ address: addr, gitlawb_did: did, ts, signature }),
+    });
+    if (!r.ok) {
+      err(paint(c.red, "✗"), r.error ?? "link failed");
+      bail(1);
+    }
+    out(paint(c.green, "✓"), "linked");
+    out(paint(c.dim, "did".padEnd(14)), paint(c.cyan, did));
+    out(paint(c.dim, "address".padEnd(14)), addr);
+    return;
+  }
+
+  if (sub === "unlink") {
+    const ts = Date.now();
+    const { signature } = await signSignaLinkGitlawb({
+      address: addr,
+      gitlawb_did: "",
+      ts,
+    });
+    const r = await httpJson("/api/users/link-gitlawb", {
+      method: "POST",
+      body: JSON.stringify({ address: addr, gitlawb_did: "", ts, signature }),
+    });
+    if (!r.ok) {
+      err(paint(c.red, "✗"), r.error ?? "unlink failed");
+      bail(1);
+    }
+    out(paint(c.green, "✓"), "gitlawb DID unlinked");
+    return;
+  }
+
+  if (sub === "status") {
+    const r = await httpJson(
+      `/api/users/resolve?handle=${addr}`,
+    ).catch(() => null);
+    out("");
+    out(paint(c.bold, "gitlawb status"));
+    out(paint(c.dim, "─".repeat(48)));
+    out(paint(c.dim, "address".padEnd(14)), paint(c.cyan, addr));
+    if (r?.gitlawb_did) {
+      out(paint(c.dim, "did".padEnd(14)), paint(c.green, r.gitlawb_did));
+    } else {
+      out(paint(c.dim, "did".padEnd(14)), paint(c.dim, "(none linked)"));
+      out(
+        paint(c.dim, "  link with:"),
+        paint(c.cyan, "signa gitlawb link did:key:..."),
+      );
+    }
+    out("");
+    return;
+  }
+
+  err("usage:");
+  err("  gitlawb link <did:key:... | did:gitlawb:<slug>>   wallet-signed bind");
+  err("  gitlawb unlink                                     wallet-signed clear");
+  err("  gitlawb status                                     show your linked DID");
+  bail(2);
+}
+
+// ----- bankr -----
+
+async function signSignaBankrTrade({ address, prompt, ts }) {
+  // Mirrors the SIGNA trade v1 envelope on /api/me/trade.
+  const acc = await account();
+  const message = [
+    "SIGNA trade v1",
+    `ts:${ts}`,
+    `address:${address}`,
+    `prompt:${prompt}`,
+  ].join("\n");
+  const signature = await acc.viemAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function cmdBankr(args) {
+  const sub = args[0];
+  const acc = await account();
+  const addr = acc.address.toLowerCase();
+
+  if (sub === "status") {
+    // Lightweight unsigned read — server only exposes a boolean, no key
+    // material. Avoids the prompt-validation trap of the trade endpoint.
+    const r = await httpJson(`/api/me/bankr-status?address=${addr}`).catch(
+      () => null,
+    );
+    out("");
+    out(paint(c.bold, "bankr status"));
+    out(paint(c.dim, "─".repeat(48)));
+    out(paint(c.dim, "address".padEnd(14)), paint(c.cyan, addr));
+    if (r?.connected) {
+      out(paint(c.dim, "connected".padEnd(14)), paint(c.green, "yes"));
+      out(
+        paint(c.dim, "  execute a trade with:"),
+        paint(c.cyan, 'signa bankr trade "buy 1 $BNKR"'),
+      );
+    } else {
+      out(paint(c.dim, "connected".padEnd(14)), paint(c.yellow, "no"));
+      out(
+        paint(c.dim, "  connect on the website — the cli won't accept API keys"),
+      );
+      out(paint(c.dim, "  on the command line (shell history is unsafe):"));
+      out(paint(c.dim, "    "), paint(c.cyan, (await baseUrl()) + "/me"));
+    }
+    out("");
+    return;
+  }
+
+  if (sub === "trade") {
+    const prompt = args.slice(1).join(" ").trim();
+    if (!prompt) {
+      err("usage: bankr trade \"<natural-language trade>\"");
+      err("  examples:");
+      err('    bankr trade "buy 100 $BNKR"');
+      err('    bankr trade "swap 0.01 ETH for $USDC"');
+      bail(2);
+    }
+    if (prompt.length > 500) {
+      err("prompt max 500 chars");
+      bail(2);
+    }
+    out(paint(c.dim, "submitting trade through bankr… this can take 10–30s"));
+    const ts = Date.now();
+    const { signature } = await signSignaBankrTrade({
+      address: addr,
+      prompt,
+      ts,
+    });
+    let r;
+    try {
+      r = await httpJson("/api/me/trade", {
+        method: "POST",
+        body: JSON.stringify({ address: addr, prompt, ts, signature }),
+      });
+    } catch (e) {
+      err(paint(c.red, "✗"), `trade failed: ${e?.message ?? e}`);
+      bail(1);
+    }
+    out("");
+    if (r.status === "completed" || r.status === "success" || r.ok) {
+      out(paint(c.green, "✓ trade completed"));
+    } else if (r.status === "failed") {
+      out(paint(c.red, "✗ trade failed:"), r.error ?? r.message ?? "(no detail)");
+    } else {
+      out(paint(c.yellow, "!"), `status: ${r.status ?? "unknown"}`);
+    }
+    if (r.result) {
+      const x = r.result;
+      if (x.transactionHash) {
+        out(paint(c.dim, "tx".padEnd(14)), paint(c.cyan, x.transactionHash));
+        out(paint(c.dim, "view".padEnd(14)), `https://basescan.org/tx/${x.transactionHash}`);
+      }
+      if (x.tokenSymbol) out(paint(c.dim, "token".padEnd(14)), x.tokenSymbol);
+      if (x.amountIn) out(paint(c.dim, "in".padEnd(14)), x.amountIn);
+      if (x.amountOut) out(paint(c.dim, "out".padEnd(14)), x.amountOut);
+    }
+    return;
+  }
+
+  err("usage:");
+  err("  bankr status                  show whether your bankr key is connected");
+  err("  bankr trade \"<prompt>\"        wallet-signed natural-language trade");
+  err("");
+  err("  to connect a bankr key, visit /me on the website — API keys can't be");
+  err("  pasted into a CLI safely (shell history persists them).");
+  bail(2);
+}
+
+// ----- miroshark -----
+
+async function cmdMiroshark(args) {
+  // Miroshark is routed via the gateway's `swarm` intent. The CLI here
+  // is a tiny wrapper: prepend a swarm hint to the user's prompt and
+  // call the gateway. The gateway will detect the swarm signal,
+  // dispatch to a miroshark-aware specialist, and the response will
+  // come back with sim metadata if a sim was created.
+  const prompt = args.join(" ").trim();
+  if (!prompt) {
+    err("usage: miroshark <natural-language scenario>");
+    err("  examples:");
+    err('    miroshark "simulate 500 holders deciding to sell $BNKR after a 30% pump"');
+    err('    miroshark "swarm vote: would devs adopt erc-8004 if SDK landed today?"');
+    bail(2);
+  }
+  // Wrap in an explicit swarm directive so the gateway's intent classifier
+  // picks miroshark even on prompts that don't read as "obviously swarm".
+  const wrapped = `simulate (swarm): ${prompt}`;
+  const r = await httpJson("/api/gateway/respond", {
+    method: "POST",
+    body: JSON.stringify({ prompt: wrapped }),
+  });
+  if (!r.ok) {
+    err(paint(c.red, "✗"), r.error ?? "miroshark failed");
+    bail(1);
+  }
+  out("");
+  out(r.response);
+  out("");
+  printGatewayFooter(r);
+}
+
 // ---------- banner + REPL ----------
 
 function bannerLines() {
@@ -2223,6 +2660,8 @@ const REPL_COMMANDS = [
   "post", "dm", "reply", "like", "unlike", "rate",
   "inbox", "watch", "receipts",
   "send",
+  // partner integrations
+  "aeon", "gitlawb", "bankr", "miroshark",
   "update",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
@@ -2282,6 +2721,22 @@ function replCompleter(line) {
   }
   if (head === "update" && last.startsWith("--")) {
     return [["--check"], last];
+  }
+  // partner subcommands
+  if (head === "aeon" && tokens.length === 2) {
+    const opts = ["resolve", "balance"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "gitlawb" && tokens.length === 2) {
+    const opts = ["link", "unlink", "status"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "bankr" && tokens.length === 2) {
+    const opts = ["status", "trade"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
   }
   return [[], last];
 }
@@ -2620,6 +3075,18 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "chat":
       await cmdChat(rest, { fromRepl, replRl });
+      break;
+    case "aeon":
+      await cmdAeon(rest);
+      break;
+    case "gitlawb":
+      await cmdGitlawb(rest);
+      break;
+    case "bankr":
+      await cmdBankr(rest);
+      break;
+    case "miroshark":
+      await cmdMiroshark(rest);
       break;
     case "search":
     case "s":
