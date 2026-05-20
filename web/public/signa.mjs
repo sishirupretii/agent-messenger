@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -81,6 +81,12 @@ const ETH_RPC = env.SIGNA_ETH_RPC || "https://ethereum.publicnode.com";
 // ERC-8004 Identity Registry on Ethereum mainnet (aeon protocol).
 // Reference: eips.ethereum.org/EIPS/eip-8004 and 8004.org.
 const ERC8004_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
+
+// Gitlawb node — public REST API for repo/profile/task reads. No auth
+// required for reads. Override with SIGNA_GITLAWB_NODE for a different
+// gitlawb node (the network is multi-node by design).
+const GITLAWB_NODE = env.SIGNA_GITLAWB_NODE || "https://node.gitlawb.com";
+const GITLAWB_PLAYGROUND = "https://playground.gitlawb.app";
 
 // Make Node ES-module resolution include ~/.signa/node_modules so the
 // dynamic import("viem") below finds the installer-placed copy of viem
@@ -535,12 +541,17 @@ ${paint(c.bold, "Tokens")}
 ${paint(c.bold, "Partner ecosystem")}
   aeon resolve <token_id>        ERC-8004 lookup on Ethereum mainnet
   aeon balance <0x address>      ERC-8004 tokens held by an address
+  aeon agent <0x signa_agent>    ERC-8004 registration for a signa agent
+  gitlawb resolve <did>          gitlawb profile (repos, tasks) · direct read
+  gitlawb repos [--owner=did]    list repos on the gitlawb node · direct read
+  gitlawb playground "<prompt>"  composes a playground.gitlawb.app URL
   gitlawb link <did>             wallet-signed bind of a gitlawb DID
   gitlawb unlink                 clear the DID binding
   gitlawb status                 show your current linked DID
   bankr status                   show whether your bankr key is connected
   bankr trade "<prompt>"         wallet-signed natural-language trade
   miroshark <scenario>           swarm simulation via the gateway
+  miroshark sim <0x signa_agent> show miroshark sim binding for an agent
 
 ${paint(c.bold, "XMTP — real P2P E2E messaging")}
   xmtp init                       one-time identity registration on XMTP
@@ -2800,9 +2811,62 @@ async function cmdAeon(args) {
     out("");
     return;
   }
+  if (sub === "agent") {
+    // Convenience: look up the ERC-8004 registration BOUND TO a signa
+    // agent. We pull the agent's record from /api/agents/<addr> to get
+    // the recorded erc8004_token_id, then resolve it on-chain.
+    const sAddr = (args[1] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(sAddr)) {
+      err("usage: aeon agent <0x signa_agent_address>");
+      bail(2);
+    }
+    const r = await httpJson(`/api/agents/${sAddr}`).catch(() => null);
+    const agent = r?.agent;
+    if (!agent) {
+      err(paint(c.red, "✗"), `signa agent ${sAddr} not found`);
+      bail(1);
+    }
+    const tokenId = agent.erc8004_token_id;
+    out("");
+    out(paint(c.bold, "aeon registration for signa agent"));
+    out(paint(c.dim, "─".repeat(64)));
+    out(paint(c.dim, "agent".padEnd(14)), paint(c.cyan, agent.address));
+    out(paint(c.dim, "name".padEnd(14)), agent.name ?? "?");
+    if (!tokenId) {
+      out(paint(c.dim, "erc8004".padEnd(14)), paint(c.yellow, "not registered"));
+      out(paint(c.dim, "  the agent's owner can register on https://www.8004.org"));
+      return;
+    }
+    out(paint(c.dim, "token_id".padEnd(14)), paint(c.cyan, String(tokenId)));
+    // Resolve on-chain to confirm
+    const client = await ethClient();
+    try {
+      const [uri, owner] = await Promise.all([
+        client.readContract({
+          address: ERC8004_REGISTRY,
+          abi: ERC8004_ABI,
+          functionName: "agentURI",
+          args: [BigInt(tokenId)],
+        }),
+        client.readContract({
+          address: ERC8004_REGISTRY,
+          abi: ERC8004_ABI,
+          functionName: "ownerOf",
+          args: [BigInt(tokenId)],
+        }),
+      ]);
+      out(paint(c.dim, "on-chain owner".padEnd(14)), paint(c.cyan, owner));
+      out(paint(c.dim, "agent uri".padEnd(14)), uri);
+      out(paint(c.green, "✓"), "verified on Ethereum mainnet");
+    } catch (e) {
+      err(paint(c.yellow, "!"), `on-chain resolve failed: ${e?.shortMessage ?? e?.message ?? e}`);
+    }
+    return;
+  }
   err("usage:");
-  err("  aeon resolve <token_id>     fetch ERC-8004 agent metadata from chain");
-  err("  aeon balance <0x address>   count ERC-8004 tokens owned");
+  err("  aeon resolve <token_id>            fetch ERC-8004 agent metadata from chain");
+  err("  aeon balance <0x address>          count ERC-8004 tokens owned");
+  err("  aeon agent <0x signa_agent_addr>   show ERC-8004 binding for a signa agent");
   bail(2);
 }
 
@@ -2822,8 +2886,129 @@ async function signSignaLinkGitlawb({ address, gitlawb_did, ts }) {
   return { signature, message };
 }
 
+/**
+ * Direct fetch against gitlawb.com (or any gitlawb node). No signa
+ * server in the path — this is the partner-integrated decentralization
+ * piece for gitlawb. If signaagent.xyz disappears, these commands
+ * keep working as long as the gitlawb node is up.
+ */
+async function gitlawbFetch(path) {
+  try {
+    const res = await fetch(`${GITLAWB_NODE}${path}`, {
+      headers: {
+        accept: "application/json",
+        "user-agent": `signa-cli/${VERSION}`,
+      },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 async function cmdGitlawb(args) {
   const sub = args[0];
+
+  // ----- direct-read commands (no signa, no wallet) -----
+
+  if (sub === "resolve") {
+    const did = (args[1] ?? "").trim();
+    if (!did) {
+      err("usage: gitlawb resolve <did:key:z6Mk... | did:gitlawb:<slug>>");
+      bail(2);
+    }
+    out(paint(c.dim, `querying ${GITLAWB_NODE}…`));
+    const repos = await gitlawbFetch(
+      `/api/v1/repos?owner=${encodeURIComponent(did)}&limit=20`,
+    );
+    const tasks = await gitlawbFetch(
+      `/tasks?assignee=${encodeURIComponent(did)}&status=open&limit=50`,
+    );
+    out("");
+    out(paint(c.bold, "gitlawb profile"));
+    out(paint(c.dim, "─".repeat(72)));
+    out(paint(c.dim, "did".padEnd(14)), paint(c.cyan, did));
+    out(paint(c.dim, "node".padEnd(14)), GITLAWB_NODE);
+    const repoList = repos?.repos ?? [];
+    out(paint(c.dim, "repos".padEnd(14)), paint(c.cyan, String(repoList.length)));
+    const taskList = tasks?.tasks ?? [];
+    out(paint(c.dim, "open tasks".padEnd(14)), paint(c.cyan, String(taskList.length)));
+    if (repoList.length > 0) {
+      out("");
+      out(paint(c.bold, "recent repos"));
+      for (const r of repoList.slice(0, 8)) {
+        const name = r.name ?? "?";
+        out("  " + paint(c.cyan, name) + " " + paint(c.dim, (r.description ?? "").slice(0, 60)));
+      }
+    }
+    if (taskList.length > 0) {
+      out("");
+      out(paint(c.bold, "open tasks"));
+      for (const t of taskList.slice(0, 5)) {
+        const bounty = t.bounty
+          ? `${t.bounty.amount ?? "?"} ${t.bounty.token ?? ""}`
+          : "";
+        out(
+          "  " +
+            paint(c.yellow, (t.title ?? "?").slice(0, 50)) +
+            " " +
+            paint(c.dim, bounty),
+        );
+      }
+    }
+    out("");
+    out(paint(c.dim, "  source: " + GITLAWB_NODE + " · no signa server in the path"));
+    return;
+  }
+
+  if (sub === "repos") {
+    let owner = null;
+    let limit = 20;
+    for (const a of args.slice(1)) {
+      if (a.startsWith("--owner=")) owner = a.slice(8);
+      else if (a.startsWith("--limit=")) limit = Math.max(1, Number(a.slice(8)) || 20);
+    }
+    const path = owner
+      ? `/api/v1/repos?owner=${encodeURIComponent(owner)}&limit=${limit}`
+      : `/api/v1/repos?limit=${limit}`;
+    const r = await gitlawbFetch(path);
+    const repos = r?.repos ?? [];
+    out("");
+    out(
+      paint(c.bold, owner ? `repos for ${owner}` : "recent repos on gitlawb"),
+      paint(c.dim, `(${GITLAWB_NODE})`),
+    );
+    out(paint(c.dim, "─".repeat(72)));
+    if (repos.length === 0) {
+      out(paint(c.dim, "  no repos found."));
+      return;
+    }
+    for (const r of repos.slice(0, limit)) {
+      const name = `${r.owner ?? "?"}/${r.name ?? "?"}`;
+      const desc = (r.description ?? "").slice(0, 60);
+      out(" " + paint(c.cyan, name) + "  " + paint(c.dim, desc));
+    }
+  }
+
+  if (sub === "playground") {
+    const prompt = args.slice(1).join(" ").trim();
+    if (!prompt) {
+      err('usage: gitlawb playground "<prompt to seed playground>"');
+      bail(2);
+    }
+    const url = `${GITLAWB_PLAYGROUND}/?prompt=${encodeURIComponent(prompt)}`;
+    out("");
+    out(paint(c.bold, "gitlawb playground"), paint(c.dim, "→ paste into your browser"));
+    out(paint(c.dim, "─".repeat(72)));
+    out(paint(c.cyan, url));
+    out("");
+    out(paint(c.dim, "  opens a fresh Playground session pre-loaded with your prompt."));
+    return;
+  }
+
+  // ----- wallet-signed commands (link/unlink/status) — existing -----
+
   const acc = await account();
   const addr = acc.address.toLowerCase();
 
@@ -3357,17 +3542,46 @@ async function cmdWatchlist(args) {
 // ----- miroshark -----
 
 async function cmdMiroshark(args) {
-  // Miroshark is routed via the gateway's `swarm` intent. The CLI here
-  // is a tiny wrapper: prepend a swarm hint to the user's prompt and
-  // call the gateway. The gateway will detect the swarm signal,
-  // dispatch to a miroshark-aware specialist, and the response will
-  // come back with sim metadata if a sim was created.
+  // Subcommands:
+  //   miroshark sim <0x signa_agent>   show miroshark binding for a signa agent
+  //   miroshark <prompt...>            route a swarm sim through the gateway
+  const sub = args[0];
+  if (sub === "sim") {
+    const sAddr = (args[1] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(sAddr)) {
+      err("usage: miroshark sim <0x signa_agent_address>");
+      bail(2);
+    }
+    const r = await httpJson(`/api/agents/${sAddr}`).catch(() => null);
+    const agent = r?.agent;
+    if (!agent) {
+      err(paint(c.red, "✗"), `signa agent ${sAddr} not found`);
+      bail(1);
+    }
+    out("");
+    out(paint(c.bold, "miroshark binding for signa agent"));
+    out(paint(c.dim, "─".repeat(64)));
+    out(paint(c.dim, "agent".padEnd(14)), paint(c.cyan, agent.address));
+    out(paint(c.dim, "name".padEnd(14)), agent.name ?? "?");
+    const simId = agent.miroshark_sim_id;
+    if (!simId) {
+      out(paint(c.dim, "miroshark".padEnd(14)), paint(c.yellow, "no sim bound yet"));
+      out(paint(c.dim, "  run a swarm scenario through the agent to seed a sim:"));
+      out(
+        paint(c.dim, "  signa miroshark \"simulate 500 holders dumping after a 30% pump\""),
+      );
+      return;
+    }
+    out(paint(c.dim, "sim id".padEnd(14)), paint(c.cyan, simId));
+    out(paint(c.dim, "  preview: https://www.miroshark.io/sim/" + simId));
+    return;
+  }
   const prompt = args.join(" ").trim();
   if (!prompt) {
-    err("usage: miroshark <natural-language scenario>");
-    err("  examples:");
-    err('    miroshark "simulate 500 holders deciding to sell $BNKR after a 30% pump"');
-    err('    miroshark "swarm vote: would devs adopt erc-8004 if SDK landed today?"');
+    err("usage:");
+    err("  miroshark <prompt>                run a swarm scenario via the gateway");
+    err("  miroshark sim <0x signa_agent>    show sim binding for a signa agent");
+    err("  e.g.  miroshark \"simulate 500 holders dumping after a 30% pump\"");
     bail(2);
   }
   // Wrap in an explicit swarm directive so the gateway's intent classifier
@@ -4035,12 +4249,17 @@ function replCompleter(line) {
   }
   // partner subcommands
   if (head === "aeon" && tokens.length === 2) {
-    const opts = ["resolve", "balance"];
+    const opts = ["resolve", "balance", "agent"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
   if (head === "gitlawb" && tokens.length === 2) {
-    const opts = ["link", "unlink", "status"];
+    const opts = ["resolve", "repos", "playground", "link", "unlink", "status"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "miroshark" && tokens.length === 2) {
+    const opts = ["sim"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
