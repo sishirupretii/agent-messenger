@@ -14,7 +14,8 @@ import { Footer } from "@/components/shell/Footer";
  * without the user installing anything else.
  */
 
-const INSTALL_CMD = `curl -fsSL https://www.signaagent.xyz/install.sh | bash`;
+const INSTALL_UNIX = `curl -fsSL https://www.signaagent.xyz/install.sh | bash`;
+const INSTALL_WINDOWS = `iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex`;
 
 type Cmd = { cmd: string; desc: string; example?: string };
 
@@ -123,8 +124,12 @@ const OTHER_COMMANDS: Cmd[] = [
   },
 ];
 
+type Platform = "unix" | "windows";
+
 export default function CliPage() {
+  const [platform, setPlatform] = useState<Platform>("unix");
   const [copied, setCopied] = useState(false);
+  const installCmd = platform === "unix" ? INSTALL_UNIX : INSTALL_WINDOWS;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -157,18 +162,34 @@ export default function CliPage() {
             {/* install */}
             <div className="mt-10 rounded-2xl border border-white/[0.08] bg-white/[0.02] overflow-hidden max-w-2xl">
               <div className="px-5 py-3 border-b border-white/[0.06] flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="size-2.5 rounded-full bg-white/15" />
-                  <span className="size-2.5 rounded-full bg-white/15" />
-                  <span className="size-2.5 rounded-full bg-white/15" />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPlatform("unix")}
+                    className={
+                      "px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors " +
+                      (platform === "unix"
+                        ? "bg-white/[0.08] text-white"
+                        : "text-white/45 hover:text-white/70")
+                    }
+                  >
+                    macOS / Linux
+                  </button>
+                  <button
+                    onClick={() => setPlatform("windows")}
+                    className={
+                      "px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors " +
+                      (platform === "windows"
+                        ? "bg-white/[0.08] text-white"
+                        : "text-white/45 hover:text-white/70")
+                    }
+                  >
+                    Windows
+                  </button>
                 </div>
-                <span className="text-[10px] uppercase tracking-wider text-white/40 font-mono">
-                  one-line install
-                </span>
                 <button
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(INSTALL_CMD);
+                      await navigator.clipboard.writeText(installCmd);
                       setCopied(true);
                       setTimeout(() => setCopied(false), 1500);
                     } catch {
@@ -180,21 +201,35 @@ export default function CliPage() {
                   {copied ? "copied ✓" : "copy"}
                 </button>
               </div>
-              <pre className="px-5 py-5 text-[13px] font-mono text-white/90 overflow-x-auto">
-                {INSTALL_CMD}
+              <pre className="px-5 py-5 text-[13px] font-mono text-white/90 overflow-x-auto whitespace-pre-wrap break-all">
+                {installCmd}
               </pre>
             </div>
             <p className="text-[12px] text-white/45 mt-3 max-w-2xl">
-              Requires Node 18+, npm, and curl. Installs to{" "}
-              <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
-                ~/.signa/bin/signa
-              </code>{" "}
-              alongside a local{" "}
-              <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
-                viem
-              </code>{" "}
-              for wallet ops. The installer prints PATH instructions when
-              it&apos;s done.
+              {platform === "unix" ? (
+                <>
+                  Requires Node 18+, npm, and curl. Installs to{" "}
+                  <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
+                    ~/.signa/bin/signa
+                  </code>{" "}
+                  alongside a local{" "}
+                  <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
+                    viem
+                  </code>{" "}
+                  for wallet ops. The installer prints PATH instructions
+                  when it&apos;s done.
+                </>
+              ) : (
+                <>
+                  Run in <strong>PowerShell</strong> (not cmd). Requires
+                  Node 18+ and npm. Installs to{" "}
+                  <code className="text-white/70 bg-white/[0.04] rounded px-1 py-0.5">
+                    %USERPROFILE%\.signa\bin\signa.cmd
+                  </code>{" "}
+                  and appends that folder to your user PATH automatically.
+                  Open a new terminal after install.
+                </>
+              )}
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
