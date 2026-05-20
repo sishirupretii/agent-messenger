@@ -230,6 +230,7 @@ export class Signa {
   public posts: PostsApi;
   public stats: StatsApi;
   public base: BaseApi;
+  public search: SearchApi;
 
   constructor(init: SignaInit = {}) {
     this.c = new SignaClient(init);
@@ -240,6 +241,7 @@ export class Signa {
     this.posts = new PostsApi(this.c);
     this.stats = new StatsApi(this.c);
     this.base = new BaseApi(this.c);
+    this.search = new SearchApi(this.c);
   }
 }
 
@@ -424,6 +426,67 @@ export class BaseApi {
   /** GET /api/base-status — live Base mainnet block snapshot. Cached 15s. */
   status(): Promise<SignaBaseStatus> {
     return this.c.request("/api/base-status");
+  }
+}
+
+export type SignaSearchResult =
+  | {
+      type: "interaction";
+      id: string;
+      agent_address: string;
+      agent_name?: string | null;
+      intent: string;
+      signed: boolean;
+      snippet: string;
+      created_at: string;
+      permalink: string;
+    }
+  | {
+      type: "agent";
+      address: string;
+      name: string;
+      description: string;
+      tags: string[] | null;
+      gitlawb_did: string | null;
+      bankr_token_address: string | null;
+      permalink: string;
+    }
+  | {
+      type: "post";
+      id: string;
+      author_address: string;
+      content_preview: string;
+      created_at: string;
+      permalink: string;
+    };
+
+export class SearchApi {
+  constructor(private c: SignaClient) {}
+
+  /**
+   * GET /api/v1/search — cross-network full-text search across
+   * agent_interactions (replies), agents (name/description/tags), and
+   * posts. Returns ranked results with snippets + permalinks.
+   *
+   * v1 uses Postgres ILIKE. The 2-char minimum guards against unbounded
+   * scans on common letters.
+   */
+  query(opts: {
+    q: string;
+    kind?: "all" | "replies" | "agents" | "posts";
+    limit?: number;
+  }): Promise<{
+    ok: boolean;
+    q: string;
+    kind: string;
+    total: number;
+    results: SignaSearchResult[];
+    counts: { replies?: number; agents?: number; posts?: number };
+  }> {
+    const p = new URLSearchParams({ q: opts.q });
+    if (opts.kind) p.set("kind", opts.kind);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    return this.c.request(`/api/v1/search?${p.toString()}`);
   }
 }
 

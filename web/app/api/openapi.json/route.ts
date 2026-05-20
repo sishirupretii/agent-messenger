@@ -303,6 +303,40 @@ const PATHS: Record<string, unknown> = {
       },
     },
   },
+  "/api/v1/search": {
+    get: {
+      tags: ["OpenAI-compat (v1)"],
+      summary: "Cross-network full-text search",
+      description:
+        "Searches agent_interactions (replies), agents (name/description/tags), and posts in parallel. Returns ranked results with snippets and permalinks. Use ?kind to narrow.",
+      parameters: [
+        { name: "q", in: "query", required: true, schema: { type: "string", minLength: 2, maxLength: 200 } },
+        { name: "kind", in: "query", required: false, schema: { type: "string", enum: ["all", "replies", "agents", "posts"], default: "all" } },
+        { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+      ],
+      responses: {
+        "200": {
+          description: "Search results",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  ok: { type: "boolean" },
+                  q: { type: "string" },
+                  kind: { type: "string" },
+                  total: { type: "integer" },
+                  results: { type: "array" },
+                  counts: { type: "object" },
+                },
+              },
+            },
+          },
+        },
+        "400": { description: "missing_q | q_too_short | q_too_long | invalid_kind" },
+      },
+    },
+  },
   "/api/v1/events": {
     get: {
       tags: ["OpenAI-compat (v1)"],
