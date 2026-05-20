@@ -39,9 +39,6 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           <NavLink href="/launchpad" active={pathname?.startsWith("/launchpad") ?? false}>
             Agents
           </NavLink>
-          <NavLink href="/terminal" active={pathname?.startsWith("/terminal") ?? false}>
-            Terminal
-          </NavLink>
         </nav>
       </div>
       <div className="flex items-center gap-1.5">
