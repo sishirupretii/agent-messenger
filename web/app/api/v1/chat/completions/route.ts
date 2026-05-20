@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import Groq from "groq-sdk";
 import { serverClient } from "@/lib/supabase";
 import {
   classifyIntent,
@@ -7,6 +8,8 @@ import {
   GATEWAY_LIMITS,
   type GatewayIntent,
 } from "@/lib/gateway";
+
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,12 +71,32 @@ type ChatMessage = {
   name?: string;
 };
 
+type ToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+};
+
+type ToolChoice =
+  | "auto"
+  | "none"
+  | "required"
+  | { type: "function"; function: { name: string } };
+
 type ChatCompletionsBody = {
   model?: string;
   messages?: ChatMessage[];
   stream?: boolean;
   temperature?: number;
   max_tokens?: number;
+  // OpenAI tools API. When tools are provided, we route through Groq
+  // directly with tool-calling enabled. See "TOOLS PATH" below.
+  tools?: ToolDefinition[];
+  tool_choice?: ToolChoice;
+  response_format?: { type: "text" | "json_object" };
   // SIGNA-specific extensions (OpenAI SDKs forward unknown fields
   // untouched, so these come through transparent)
   agent_address?: string;
@@ -177,20 +200,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ---------- streaming guard ----------
-  if (body.stream === true) {
-    return NextResponse.json(
-      {
-        error: {
-          message:
-            "Streaming (stream: true) is not yet supported by SIGNA. Set stream:false (default) and the full reply will return in one response. SSE streaming is on the roadmap.",
-          type: "not_implemented",
-          code: "stream_not_supported",
-        },
-      },
-      { status: 501 },
-    );
-  }
+  // Streaming flag — proper SSE response when true, JSON when false.
+  // Both paths funnel through the same routing / specialist picker
+  // / forward-to-/respond logic; only the response framing differs.
+  const wantStream = body.stream === true;
 
   // ---------- validate prompt ----------
   const prompt = flattenMessages(body.messages).trim();
@@ -218,6 +231,99 @@ export async function POST(req: NextRequest) {
       },
       { status: 400 },
     );
+  }
+
+  // ============================================================
+  // TOOLS PATH — OpenAI function-calling passthrough via Groq.
+  //
+  // When the caller provides `tools[]` (and didn't disable via
+  // tool_choice:"none"), we skip our intent router entirely and
+  // route the (messages + tools) ensemble directly to Groq with
+  // tool-calling enabled. The response carries Groq's native
+  // tool_calls — exactly what every OpenAI tool-using framework
+  // (LangChain agents, OpenAI assistants API, Mastra, etc.) expects.
+  //
+  // The signa extension is omitted in tools mode because we didn't
+  // route through a signa agent — the caller opted into the
+  // raw-LLM-with-tools workflow. They can still get signed replies
+  // by calling the endpoint without tools, which uses our agent
+  // routing path below.
+  // ============================================================
+  const wantsTools =
+    Array.isArray(body.tools) &&
+    body.tools.length > 0 &&
+    body.tool_choice !== "none";
+
+  if (wantsTools) {
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) {
+      return NextResponse.json(
+        {
+          error: {
+            message:
+              "Tools/function-calling requires GROQ_API_KEY on the SIGNA deployment. Without it, omit `tools` and the endpoint will use the intent router instead.",
+            type: "service_unavailable",
+            code: "groq_not_configured",
+          },
+        },
+        { status: 503 },
+      );
+    }
+    const groq = new Groq({ apiKey: groqKey });
+
+    try {
+      // Note: we pass through OpenAI-shape messages/tools/tool_choice
+      // directly. Groq's chat.completions API speaks the same shape
+      // as OpenAI's for these fields.
+      const groqRes = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: (body.messages ?? []) as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tools: body.tools as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tool_choice: (body.tool_choice ?? "auto") as any,
+        temperature: body.temperature,
+        max_completion_tokens: body.max_tokens,
+        stream: false, // streaming + tools is roadmap; v1 always JSON
+      });
+
+      // Override the model name in the response so consumers see the
+      // signa-* model id they requested, not Groq's internal name.
+      const id = `chatcmpl-${groqRes.id?.slice(-24) ?? chatId().slice(9)}`;
+      return NextResponse.json({
+        id,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: body.model ?? "signa-gateway",
+        choices: groqRes.choices,
+        usage: groqRes.usage,
+        // SIGNA extension still present, but minimal — flags that
+        // this response came from the tools path so consumers know
+        // there's no signed reply attached.
+        signa: {
+          mode: "tools_passthrough",
+          backend: "groq",
+          backend_model: GROQ_MODEL,
+          signed: false,
+          interaction_id: null,
+          sources: [],
+          notice:
+            "Tools mode bypasses the signa agent router — call without `tools` to get a wallet-signed reply with source attribution.",
+        },
+      });
+    } catch (e) {
+      return NextResponse.json(
+        {
+          error: {
+            message: e instanceof Error ? e.message : String(e),
+            type: "tools_backend_error",
+            code: "groq_tools_failed",
+          },
+        },
+        { status: 502 },
+      );
+    }
   }
 
   // ---------- pick target agent ----------
@@ -337,47 +443,168 @@ export async function POST(req: NextRequest) {
 
   // ---------- shape the OpenAI response ----------
   const completion = fwd.response ?? "";
-  // Rough token counts so OpenAI client libraries that surface usage
-  // don't show null. ~4 chars per token is the conventional estimate.
   const promptTokens = Math.ceil(prompt.length / 4);
   const completionTokens = Math.ceil(completion.length / 4);
+  const id = chatId();
+  const created = Math.floor(Date.now() / 1000);
 
-  return NextResponse.json({
-    id: chatId(),
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content: completion,
+  // Common signa extension block — same data on both code paths.
+  const signaBlock = {
+    interaction_id: fwd.interaction_id ?? null,
+    intent: fwd.intent ?? classifiedIntent,
+    sources: fwd.sources ?? [],
+    signed: fwd.signed ?? false,
+    signature: fwd.signature ?? null,
+    signed_message: fwd.signed_message ?? null,
+    agent_did: fwd.agent_did ?? null,
+    routed_to: routedTo,
+    elapsed_ms: Date.now() - startedAt,
+    permalink: fwd.interaction_id
+      ? `https://www.signaagent.xyz/i/${fwd.interaction_id}`
+      : null,
+  };
+
+  // -------- NON-STREAMING PATH --------
+  if (!wantStream) {
+    return NextResponse.json({
+      id,
+      object: "chat.completion",
+      created,
+      model,
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: completion },
+          finish_reason: "stop",
+          logprobs: null,
         },
-        finish_reason: "stop",
-        logprobs: null,
+      ],
+      usage: {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens,
       },
-    ],
-    usage: {
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: promptTokens + completionTokens,
+      signa: signaBlock,
+    });
+  }
+
+  // -------- STREAMING PATH (Server-Sent Events) --------
+  //
+  // Wire format per OpenAI spec: each chunk is a single line:
+  //   data: <JSON ChatCompletionChunk>
+  // followed by a blank line. Terminator is:
+  //   data: [DONE]
+  //
+  // Each chunk has the same id/object/created/model. The delta carries
+  // the new content piece. First chunk includes role:"assistant". Last
+  // content chunk has finish_reason:"stop" and an empty delta.
+  //
+  // We chunk the completion text in ~24-char windows with a 12ms
+  // inter-chunk delay so the stream "feels" live in the consumer
+  // (matters when the consumer is rendering token-by-token in a UI).
+  // The 12ms delay also keeps connections warm — Vercel functions
+  // close idle TCP after a few seconds.
+  //
+  // The final chunk includes the signa extension on the chunk object
+  // itself. OpenAI's chat.completion.chunk schema permits unknown
+  // top-level fields, so strict parsers ignore it; consumers that
+  // know about signa can read the verifiable signature off the stream.
+
+  const encoder = new TextEncoder();
+  const chunkSize = 24;
+  const interChunkDelayMs = 12;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (obj: unknown) => {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(obj)}\n\n`),
+        );
+      };
+      const sendDone = () => {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      };
+
+      // 1) Role-only opening chunk — OpenAI clients expect this exact
+      //    first delta so they know the assistant is starting.
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [
+          {
+            index: 0,
+            delta: { role: "assistant", content: "" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      });
+
+      // 2) Content deltas — slice the completion into chunks.
+      for (let i = 0; i < completion.length; i += chunkSize) {
+        const piece = completion.slice(i, i + chunkSize);
+        send({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: { content: piece },
+              finish_reason: null,
+              logprobs: null,
+            },
+          ],
+        });
+        if (interChunkDelayMs > 0) {
+          await new Promise((r) => setTimeout(r, interChunkDelayMs));
+        }
+      }
+
+      // 3) Final chunk — empty delta + finish_reason + signa extension.
+      send({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: "stop",
+            logprobs: null,
+          },
+        ],
+        usage: {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
+        },
+        signa: signaBlock,
+      });
+
+      // 4) Terminator per OpenAI spec.
+      sendDone();
+      controller.close();
     },
-    // SIGNA extension — additive on top of the strict OpenAI shape.
-    // OpenAI clients ignore unknown top-level fields, so this is safe.
-    signa: {
-      interaction_id: fwd.interaction_id ?? null,
-      intent: fwd.intent ?? classifiedIntent,
-      sources: fwd.sources ?? [],
-      signed: fwd.signed ?? false,
-      signature: fwd.signature ?? null,
-      signed_message: fwd.signed_message ?? null,
-      agent_did: fwd.agent_did ?? null,
-      routed_to: routedTo,
-      elapsed_ms: Date.now() - startedAt,
-      permalink: fwd.interaction_id
-        ? `https://www.signaagent.xyz/i/${fwd.interaction_id}`
-        : null,
+    cancel() {
+      // Client disconnected mid-stream. Nothing to clean up — we've
+      // already fetched the full reply before streaming starts.
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      // Some proxies (Cloudflare in particular) buffer SSE without
+      // this header. Vercel honors it.
+      "x-accel-buffering": "no",
+      "access-control-allow-origin": "*",
     },
   });
 }

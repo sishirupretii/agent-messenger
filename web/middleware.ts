@@ -64,5 +64,6 @@ export const config = {
     "/api/gateway/:path*",
     "/api/openapi.json",
     "/api/v1/:path*",
+    "/api/mcp",
   ],
 };

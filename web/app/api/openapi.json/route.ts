@@ -33,6 +33,7 @@ const SERVERS = [
 ];
 
 const TAGS = [
+  { name: "MCP", description: "Model Context Protocol server — install SIGNA as native tools in Claude Desktop, Cursor, Cline, or any MCP-aware client." },
   { name: "OpenAI-compat (v1)", description: "Drop-in replacement for the OpenAI SDK — point baseURL at /api/v1 and everything just works." },
   { name: "Gateway", description: "Open natural-language router across the agent network." },
   { name: "Agents", description: "Per-agent endpoints — directly call one signa-launched agent." },
@@ -152,6 +153,52 @@ const COMPONENTS = {
 };
 
 const PATHS: Record<string, unknown> = {
+  "/api/mcp": {
+    get: {
+      tags: ["MCP"],
+      summary: "MCP server descriptor + install configs",
+      description:
+        "Human-readable health response: returns server info, protocol version, supported capabilities, the full tool catalog, and ready-to-paste install configs for Claude Desktop and Cursor.",
+      responses: {
+        "200": {
+          description: "MCP server metadata",
+          content: { "application/json": { schema: { type: "object" } } },
+        },
+      },
+    },
+    post: {
+      tags: ["MCP"],
+      summary: "JSON-RPC 2.0 MCP endpoint (HTTP transport)",
+      description:
+        "Accepts a single JSON-RPC request or a batch. Methods supported: initialize, tools/list, tools/call, ping, notifications/initialized, notifications/cancelled. Per the Model Context Protocol spec.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              oneOf: [
+                {
+                  type: "object",
+                  required: ["jsonrpc", "method"],
+                  properties: {
+                    jsonrpc: { type: "string", enum: ["2.0"] },
+                    id: { oneOf: [{ type: "number" }, { type: "string" }, { type: "null" }] },
+                    method: { type: "string" },
+                    params: { type: "object" },
+                  },
+                },
+                { type: "array", items: { type: "object" } },
+              ],
+            },
+          },
+        },
+      },
+      responses: {
+        "200": { description: "JSON-RPC response or batch of responses" },
+        "400": { description: "parse error (-32700)" },
+      },
+    },
+  },
   "/api/v1/chat/completions": {
     post: {
       tags: ["OpenAI-compat (v1)"],

@@ -19,19 +19,38 @@ import { Footer } from "@/components/shell/Footer";
  * mocked data.
  */
 
-type Tab = "fetch" | "curl" | "sdk" | "openai";
+type Tab = "fetch" | "curl" | "sdk" | "openai" | "mcp";
 
 const ENDPOINTS = [
   {
+    group: "MCP — Model Context Protocol",
+    intro:
+      "Install SIGNA as a native tool palette in Claude Desktop, Cursor, Cline, or any MCP-aware AI client. One config line and every signa-launched agent becomes callable from the IDE.",
+    rows: [
+      {
+        method: "POST",
+        path: "/api/mcp",
+        summary:
+          "JSON-RPC 2.0 endpoint — initialize, tools/list, tools/call, ping",
+      },
+      {
+        method: "GET",
+        path: "/api/mcp",
+        summary:
+          "Server descriptor + tool catalog + ready-to-paste install configs",
+      },
+    ],
+  },
+  {
     group: "OpenAI-compat (v1)",
     intro:
-      "Drop-in replacement for the OpenAI SDK. Set your client baseURL to /api/v1 and SIGNA becomes the model provider — no API key needed. Wallet-signed replies + source citations are surfaced in a top-level `signa` extension block that OpenAI clients ignore.",
+      "Drop-in replacement for the OpenAI SDK. Set your client baseURL to /api/v1 and SIGNA becomes the model provider — no API key needed. Streaming (stream: true) and tool/function-calling (tools[]) are supported. Wallet-signed replies + source citations are surfaced in a top-level `signa` extension block that OpenAI clients ignore.",
     rows: [
       {
         method: "POST",
         path: "/api/v1/chat/completions",
-        summary: "OpenAI chat.completion shape — drop-in for openai SDK",
-        body: '{ "model": "signa-gateway", "messages": [{ "role": "user", "content": "..." }] }',
+        summary: "OpenAI chat.completion shape — drop-in for openai SDK (streaming + tools supported)",
+        body: '{ "model": "signa-gateway", "messages": [{ "role": "user", "content": "..." }], "stream": false, "tools": [] }',
       },
       {
         method: "GET",
@@ -406,7 +425,7 @@ export default function ApiDocsPage() {
 
             <div className="mt-10 rounded-2xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
               <div className="flex border-b border-white/[0.06] text-[12px] font-mono">
-                {(["openai", "fetch", "curl", "sdk"] as Tab[]).map((t) => (
+                {(["openai", "mcp", "fetch", "curl", "sdk"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
@@ -423,6 +442,7 @@ export default function ApiDocsPage() {
               </div>
               <pre className="p-5 sm:p-6 text-[12.5px] leading-[1.7] font-mono text-white/85 overflow-x-auto">
                 {tab === "openai" && OPENAI_SNIPPET}
+                {tab === "mcp" && MCP_SNIPPET}
                 {tab === "fetch" && FETCH_SNIPPET}
                 {tab === "curl" && CURL_SNIPPET}
                 {tab === "sdk" && SDK_SNIPPET}
@@ -559,6 +579,40 @@ function Stat({ k, v }: { k: string; v: number | string }) {
   );
 }
 
+const MCP_SNIPPET = `// SIGNA ships an MCP (Model Context Protocol) server.
+// Install once, every signa-launched agent becomes callable from
+// Claude Desktop, Cursor, Cline, or any MCP-aware AI client.
+
+// 1) Claude Desktop — edit ~/Library/Application Support/Claude/claude_desktop_config.json
+{
+  "mcpServers": {
+    "signa": {
+      "url": "https://www.signaagent.xyz/api/mcp",
+      "transport": "http"
+    }
+  }
+}
+
+// 2) Cursor — Settings → MCP → Add Server
+{
+  "name": "signa",
+  "url": "https://www.signaagent.xyz/api/mcp",
+  "transport": "http"
+}
+
+// Restart the client. SIGNA's tools appear in the tool palette:
+//   signa_ask              — query the agent network
+//   signa_ask_agent        — call one specific agent
+//   signa_list_agents      — enumerate the network
+//   signa_get_agent        — agent profile
+//   signa_search_replies   — top-rated cross-agent answers
+//   signa_get_interaction  — fetch one signed reply with proof
+//   signa_get_stats        — platform counters
+
+// All replies arrive as JSON content blocks. Wallet-signed replies
+// from signa_ask carry the EIP-191 signature so the client can
+// verify the agent actually said what they're showing the user.`;
+
 const OPENAI_SNIPPET = `// SIGNA is OpenAI-API-compatible. Use the official SDK, swap one line.
 import OpenAI from "openai";
 
@@ -590,6 +644,35 @@ const direct = await ai.chat.completions.create({
   messages: [{ role: "user", content: "build me a dashboard" }],
   // @ts-expect-error — SIGNA extension. OpenAI SDKs forward unknown fields.
   agent_address: "0x000000000000000000000000000000000000a9e1",
+});
+
+// Streaming works (SSE per OpenAI spec):
+const stream = await ai.chat.completions.create({
+  model: "signa-gateway",
+  messages: [{ role: "user", content: "price of $USDC on base?" }],
+  stream: true,
+});
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
+}
+
+// Tools / function-calling — pass tools[] and signa routes through
+// Groq with tool-calling enabled, returning native OpenAI tool_calls.
+const tooled = await ai.chat.completions.create({
+  model: "signa-gateway",
+  messages: [{ role: "user", content: "what is the weather in NYC?" }],
+  tools: [{
+    type: "function",
+    function: {
+      name: "get_weather",
+      description: "get current weather for a city",
+      parameters: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+      },
+    },
+  }],
 });
 
 // Works the same way with LangChain, LlamaIndex, Vercel AI SDK,
