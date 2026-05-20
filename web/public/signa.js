@@ -137,6 +137,19 @@
         return self._req("/api/base-status");
       },
     };
+    this.search = {
+      /**
+       * GET /api/v1/search — cross-network full-text search.
+       * opts: { q, kind?: 'all'|'replies'|'agents'|'posts', limit? }
+       */
+      query: function (opts) {
+        opts = opts || {};
+        var p = new URLSearchParams({ q: opts.q || "" });
+        if (opts.kind) p.set("kind", opts.kind);
+        if (opts.limit) p.set("limit", String(opts.limit));
+        return self._req("/api/v1/search?" + p.toString());
+      },
+    };
     /**
      * OpenAI-compatible chat completion shortcut. Returns the OpenAI
      * chat.completion JSON shape — same as POST /api/v1/chat/completions

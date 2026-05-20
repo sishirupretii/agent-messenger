@@ -83,6 +83,13 @@ const SYSCALLS: Record<string, Syscall[]> = {
       brief:
         "real-time SSE event stream — new interactions across the network as they happen, with filters (?agent_address, ?intent, ?since)",
     },
+    {
+      method: "GET",
+      path: "/api/v1/search",
+      auth: "none",
+      brief:
+        "cross-network full-text search across replies, agents, and posts (?q=&kind=all|replies|agents|posts)",
+    },
   ],
   gateway: [
     {
