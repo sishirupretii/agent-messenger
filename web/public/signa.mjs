@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.12.0";
+const VERSION = "0.13.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -595,8 +595,11 @@ ${paint(c.bold, "Federation — signa is multi-node")}
   nodes                          list known signa nodes (status + version)
   node info [url]                full node metadata (current if no url)
   node ping [url]                reachability + latency probe
-  node verify <url>              validate a URL serves the signa protocol
+  node verify <url>              validate signa protocol + verify operator
+                                  attestation signature locally with viem
   node use <url>                 point this CLI at a different signa node
+  node sign-attestation <url>    operator helper — sign your node descriptor
+                                  with your local wallet, output env vars
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -1180,22 +1183,181 @@ async function cmdNode(args) {
     out(paint(c.bold, "signa-protocol check"));
     out(paint(c.dim, "─".repeat(56)));
     let allOk = true;
-    for (const [name, ok] of Object.entries(checks)) {
+    for (const [n, ok] of Object.entries(checks)) {
       out(
         (ok ? paint(c.green, " ✓") : paint(c.red, " ✗")) +
           " " +
-          name,
+          n,
       );
       if (!ok) allOk = false;
     }
+
+    // v0.13 — operator attestation check. Optional but, when present,
+    // proves cryptographically that the wallet at info.node.operator
+    // actually signed THIS exact descriptor. Re-verified locally via
+    // viem — no trust in the node's claim about itself.
+    const att = info.node?.attestation;
+    const op = info.node?.operator;
+    out("");
+    out(paint(c.bold, "operator attestation"));
+    out(paint(c.dim, "─".repeat(56)));
+    if (!att || !op) {
+      out(
+        paint(c.yellow, " !"),
+        "this node is not operator-attested",
+      );
+      out(
+        paint(
+          c.dim,
+          "   the protocol surface is correct but the operator hasn't",
+        ),
+      );
+      out(
+        paint(c.dim, "   cryptographically signed their node identity."),
+      );
+      out(
+        paint(c.dim, "   acceptable for early signa-nodes — the wallet-signed"),
+      );
+      out(
+        paint(c.dim, "   protocol still gives you per-message integrity."),
+      );
+    } else {
+      // verify the operator's signature LOCALLY
+      const vi = await viem();
+      let sigOk;
+      try {
+        sigOk = await vi.verifyMessage({
+          address: op,
+          message: att.signed_message,
+          signature: att.signature,
+        });
+      } catch {
+        sigOk = false;
+      }
+      if (sigOk) {
+        out(
+          paint(c.green, " ✓"),
+          "operator signature verifies against " + paint(c.cyan, op),
+        );
+        out(paint(c.dim, "   attested_at: " + new Date(att.attested_at).toISOString()));
+        out(
+          paint(c.dim, "   this node is cryptographically owned by " + op),
+        );
+      } else {
+        out(
+          paint(c.red, " ✗"),
+          "operator signature INVALID against " + paint(c.cyan, op),
+        );
+        out(
+          paint(
+            c.dim,
+            "   the node claims to be operated by this wallet but the",
+          ),
+        );
+        out(
+          paint(c.dim, "   signature does not validate. impersonation or"),
+        );
+        out(paint(c.dim, "   stale env config. don't trust this node."));
+        allOk = false;
+      }
+    }
+
     out("");
     if (allOk) {
       out(paint(c.green, "✓"), "this URL serves the signa protocol.");
       out(paint(c.dim, "  point at it with:"), paint(c.cyan, "signa node use " + target));
     } else {
-      out(paint(c.yellow, "!"), "URL responded but did not advertise the signa protocol.");
+      out(paint(c.yellow, "!"), "URL responded but failed protocol or attestation checks.");
       bail(1);
     }
+    return;
+  }
+
+  // ---- v0.13: operator-attestation generator ----
+  // Local helper for an operator who's deploying their own signa node.
+  // Builds the canonical preimage from the URL + the current logged-in
+  // wallet (which IS the operator wallet in this flow) + node defaults.
+  // Signs locally with viem. Prints the env vars the operator needs to
+  // paste into their server's deployment.
+  //
+  // The operator's private key never touches the server.
+  if (sub === "sign-attestation") {
+    const target = args[1];
+    if (!target || !/^https?:\/\//.test(target)) {
+      err("usage: node sign-attestation <https://your-signa-node-url>");
+      err("  signs a canonical descriptor of the node at <url> with your");
+      err("  current logged-in wallet, prints the env vars to deploy.");
+      bail(2);
+    }
+    // Pull live info so we sign the EXACT descriptor the node will serve.
+    // If it's not deployed yet, we let the operator pass --name/--version
+    // /--capabilities and synthesize one.
+    let nodeName = `signa-node`;
+    let nodeVersion = VERSION;
+    let nodeCaps = [
+      "gateway",
+      "search",
+      "mcp",
+      "events-sse",
+      "openai-compat",
+      "agents-launch",
+      "agent-runtime",
+      "verify",
+      "xmtp-indexer",
+    ];
+    for (const a of args.slice(2)) {
+      if (a.startsWith("--name=")) nodeName = a.slice(7);
+      else if (a.startsWith("--version=")) nodeVersion = a.slice(10);
+      else if (a.startsWith("--capabilities="))
+        nodeCaps = a.slice(15).split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
+    const info = await fetchNodeInfo(target, { timeoutMs: 4000 });
+    if (info.ok && info.node) {
+      if (info.node.name) nodeName = info.node.name;
+      if (info.node.version) nodeVersion = info.node.version;
+      if (Array.isArray(info.node.capabilities) && info.node.capabilities.length > 0)
+        nodeCaps = info.node.capabilities;
+    }
+
+    const acc = await account();
+    const operator = acc.address.toLowerCase();
+    const attestedAt = Date.now();
+    const sortedCaps = [...nodeCaps].sort().join(",");
+    const preimage = [
+      "SIGNA node v1",
+      `url:${target.replace(/\/$/, "")}`,
+      `name:${nodeName}`,
+      `operator:${operator}`,
+      `version:${nodeVersion}`,
+      `capabilities:${sortedCaps}`,
+      `attested_at:${attestedAt}`,
+    ].join("\n");
+    const signature = await acc.viemAccount.signMessage({ message: preimage });
+
+    out("");
+    out(paint(c.green, "✓"), "operator attestation signed locally");
+    out(paint(c.dim, "─".repeat(72)));
+    out(paint(c.dim, "operator".padEnd(16)), paint(c.cyan, operator));
+    out(paint(c.dim, "node url".padEnd(16)), target);
+    out(paint(c.dim, "node name".padEnd(16)), nodeName);
+    out(paint(c.dim, "version".padEnd(16)), nodeVersion);
+    out(paint(c.dim, "capabilities".padEnd(16)), sortedCaps);
+    out(paint(c.dim, "attested_at".padEnd(16)), String(attestedAt));
+    out("");
+    out(paint(c.bold, "env vars to set on your node deployment:"));
+    out(paint(c.dim, "─".repeat(72)));
+    out(paint(c.cyan, `SIGNA_NODE_OPERATOR_ADDRESS=${operator}`));
+    out(paint(c.cyan, `SIGNA_NODE_NAME=${nodeName}`));
+    out(paint(c.cyan, `SIGNA_NODE_ATTESTATION_SIGNATURE=${signature}`));
+    out(paint(c.cyan, `SIGNA_NODE_ATTESTED_AT=${attestedAt}`));
+    out("");
+    out(paint(c.dim, "paste these into Vercel project settings, redeploy."));
+    out(paint(c.dim, "the operator key NEVER touches the server — only the"));
+    out(paint(c.dim, "pre-computed signature does."));
+    out("");
+    out(paint(c.dim, "verify your live node afterwards with:"));
+    out(paint(c.cyan, "  signa node verify " + target));
     return;
   }
 
@@ -1223,11 +1385,12 @@ async function cmdNode(args) {
   }
 
   err("usage:");
-  err("  signa nodes                  list all known signa nodes");
-  err("  signa node info [url]        full node metadata (current if no url)");
-  err("  signa node ping [url]        reachability + latency probe");
-  err("  signa node verify <url>      validate URL serves the signa protocol");
-  err("  signa node use <url>         point this cli at a different node");
+  err("  signa nodes                          list all known signa nodes");
+  err("  signa node info [url]                full node metadata (current if no url)");
+  err("  signa node ping [url]                reachability + latency probe");
+  err("  signa node verify <url>              validate URL + check operator attestation");
+  err("  signa node use <url>                 point this cli at a different node");
+  err("  signa node sign-attestation <url>    operator helper — sign your node descriptor");
   bail(2);
 }
 
@@ -4490,7 +4653,7 @@ function replCompleter(line) {
     return [["--check"], last];
   }
   if (head === "node" && tokens.length === 2) {
-    const opts = ["info", "ping", "verify", "use"];
+    const opts = ["info", "ping", "verify", "use", "sign-attestation"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
