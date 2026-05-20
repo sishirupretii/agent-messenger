@@ -30,18 +30,19 @@
 //   iwr https://www.signaagent.xyz/install.ps1 -UseBasicParsing | iex   # windows
 
 import { argv, env, stdout, stderr, stdin, exit } from "node:process";
-import { readFile, writeFile, mkdir, unlink, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile, writeFile, mkdir, unlink, chmod, rename } from "node:fs/promises";
+import { existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
 const KEYSTORE_PATH = join(SIGNA_HOME, "keystore.json");
+const HISTORY_PATH = join(SIGNA_HOME, "history");
 
 // Base mainnet — chain id 8453. RPC defaults to mainnet.base.org which
 // is public + rate-limited but works fine for low-volume CLI traffic.
@@ -389,6 +390,7 @@ ${paint(c.bold, "Tokens")}
                                  --dry  to print the tx without broadcasting
 
 ${paint(c.bold, "Other")}
+  update [--check]               atomically upgrade the CLI from the source URL
   config set <key> <value>       set a config value (e.g. baseUrl)
   config get [key]               read config
   version | --help               show version | show this help
@@ -1681,6 +1683,257 @@ function tokenize(input) {
   return tokens;
 }
 
+// ---------- REPL: history persistence + tab completion ----------
+
+/**
+ * Canonical list of REPL-callable tokens. Used by the tab completer and
+ * by the REPL meta-command short-circuits. Keep this in sync with the
+ * dispatchCommand switch — anything reachable from the user should be
+ * here, plus the meta commands ('help', 'clear', 'exit', 'quit').
+ */
+const REPL_COMMANDS = [
+  "ask", "stream", "agent", "search", "live", "stats",
+  "feed", "thread", "profile",
+  "login", "logout", "wallet", "whoami",
+  "post", "dm", "reply", "like", "unlike", "rate",
+  "inbox", "watch", "receipts",
+  "send",
+  "update",
+  "config", "version", "banner",
+  "help", "clear", "exit", "quit",
+];
+
+/**
+ * Tab-completion. readline's `completer` receives the prefix the user
+ * has typed and expects [matches, common-prefix] back. We support:
+ *   - top-level command names
+ *   - second-token subcommands for `agent`, `config`
+ *   - `send <to> <amount> ETH|USDC` token slot
+ *   - long-flag completion for `search --kind=…` and `live --intent=…`
+ * Anything we don't recognize returns an empty match list (no completion),
+ * which is the right behavior — silently doing nothing beats a wrong guess.
+ */
+function replCompleter(line) {
+  const tokens = line.split(/\s+/);
+  const last = tokens[tokens.length - 1] ?? "";
+
+  if (tokens.length <= 1) {
+    const hits = REPL_COMMANDS.filter((c) => c.startsWith(last));
+    return [hits.length ? hits : REPL_COMMANDS, last];
+  }
+  const head = tokens[0];
+  if (head === "agent" && tokens.length === 2) {
+    const opts = ["ls", "get"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "config" && tokens.length === 2) {
+    const opts = ["set", "get", "clear"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "send" && tokens.length === 4) {
+    const opts = ["ETH", "USDC"];
+    const hits = opts.filter((s) =>
+      s.toUpperCase().startsWith(last.toUpperCase()),
+    );
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "search" && last.startsWith("--kind")) {
+    const opts = ["--kind=all", "--kind=replies", "--kind=agents", "--kind=posts"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "live" && last.startsWith("--intent")) {
+    const opts = [
+      "--intent=facts",
+      "--intent=chat",
+      "--intent=code",
+      "--intent=swarm",
+      "--intent=action",
+    ];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "update" && last.startsWith("--")) {
+    return [["--check"], last];
+  }
+  return [[], last];
+}
+
+/**
+ * Load up to 200 prior REPL lines from disk. readline expects history
+ * in reverse-chronological order (newest first), so we reverse before
+ * returning.
+ */
+async function loadHistory() {
+  try {
+    const raw = await readFile(HISTORY_PATH, "utf8");
+    return raw.split("\n").filter(Boolean).slice(-200).reverse();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist the REPL's current history. Stored in chronological order
+ * (oldest first), which is how a human reads a log. Capped at 200 lines
+ * so the file doesn't grow unbounded. Best-effort — never throws.
+ */
+async function saveHistory(rl) {
+  if (!rl?.history) return;
+  try {
+    await mkdir(SIGNA_HOME, { recursive: true });
+    const lines = [...rl.history].reverse().slice(-200);
+    await writeFile(HISTORY_PATH, lines.join("\n") + "\n");
+  } catch {
+    // ignore — history is convenience, not correctness
+  }
+}
+
+/**
+ * Synchronous variant for the ctrl-c path, where we can't safely await
+ * before process.exit. Async fs would race the exit and lose the last
+ * few commands. writeFileSync inside a signal handler is normally
+ * frowned on, but at shutdown it's the right tool.
+ */
+function saveHistorySync(rl) {
+  if (!rl?.history) return;
+  try {
+    const lines = [...rl.history].reverse().slice(-200);
+    writeFileSync(HISTORY_PATH, lines.join("\n") + "\n");
+  } catch {
+    // ignore
+  }
+}
+
+// ---------- self-update ----------
+
+/**
+ * Numeric semver compare. Returns -1 if a < b, 0 if equal, 1 if a > b.
+ * Parses up to three integer components; anything missing is treated as
+ * 0, so "0.4" and "0.4.0" are equal. Pre-release tags (e.g. "-rc.1") are
+ * ignored — we strip everything after the first non-numeric char per
+ * component to stay lenient. This is enough for our use; we don't ship
+ * pre-releases through the same URL.
+ */
+function compareSemver(a, b) {
+  const parse = (v) =>
+    v
+      .split(".")
+      .slice(0, 3)
+      .map((p) => parseInt(p, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const ai = pa[i] ?? 0;
+    const bi = pb[i] ?? 0;
+    if (ai > bi) return 1;
+    if (ai < bi) return -1;
+  }
+  return 0;
+}
+
+/**
+ * Pull the latest signa.mjs from the configured SIGNA_BASE_URL and
+ * atomically replace this very file on disk. The running process keeps
+ * the old code in memory — we surface that explicitly so the user
+ * restarts their shell instead of being confused by a partial upgrade.
+ *
+ *   signa update           — download + atomic-replace, then advise restart
+ *   signa update --check   — compare versions only, no write
+ */
+async function cmdUpdate(args) {
+  const checkOnly = args.includes("--check");
+  const base = await baseUrl();
+  const url = `${base}/signa.mjs`;
+
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { "user-agent": `signa-cli/${VERSION}` },
+    });
+  } catch (e) {
+    err(paint(c.red, "✗"), `couldn't reach ${url}: ${e?.message ?? e}`);
+    bail(1);
+  }
+  if (!res.ok) {
+    err(paint(c.red, "✗"), `couldn't fetch ${url} (HTTP ${res.status})`);
+    bail(1);
+  }
+  const content = await res.text();
+
+  // Extract VERSION from the downloaded file. We do a generous regex
+  // rather than executing the JS so a corrupted download can't side-
+  // effect our process.
+  const match = content.match(/const\s+VERSION\s*=\s*"([^"]+)"/);
+  const remoteVersion = match?.[1] ?? null;
+  if (!remoteVersion) {
+    err(paint(c.red, "✗"), "downloaded file is missing a VERSION constant — aborting.");
+    bail(1);
+  }
+
+  // Proper semver compare so "0.10.0" sorts after "0.9.0", and so we
+  // can detect dev-ahead-of-prod ("local is newer than the source URL").
+  const cmp = compareSemver(VERSION, remoteVersion);
+  out("");
+  out(
+    paint(c.dim, "local".padEnd(12)),
+    paint(c.cyan, `v${VERSION}`),
+  );
+  out(
+    paint(c.dim, "remote".padEnd(12)),
+    cmp === 0
+      ? paint(c.dim, `v${remoteVersion} (same)`)
+      : cmp < 0
+        ? paint(c.green, `v${remoteVersion}`) +
+          " " +
+          paint(c.dim, "(upgrade available)")
+        : paint(c.dim, `v${remoteVersion}`) +
+          " " +
+          paint(c.yellow, "(local is ahead — likely a dev build)"),
+  );
+  out("");
+
+  if (cmp === 0) {
+    out(paint(c.green, "✓"), `signa cli is up to date.`);
+    return;
+  }
+  if (cmp > 0) {
+    out(
+      paint(c.yellow, "!"),
+      "local is newer than the published version. nothing to do.",
+    );
+    return;
+  }
+  if (checkOnly) {
+    out(paint(c.dim, "run 'signa update' (without --check) to upgrade."));
+    return;
+  }
+
+  // Atomic write: download → tmp → rename. rename() on the same volume
+  // is atomic on every POSIX filesystem and on NTFS, so the user never
+  // sees a torn signa.mjs even if power is cut mid-write.
+  const ownPath = fileURLToPath(import.meta.url);
+  const tmpPath = ownPath + ".new";
+  try {
+    await writeFile(tmpPath, content);
+    await rename(tmpPath, ownPath);
+  } catch (e) {
+    err(paint(c.red, "✗"), `write failed: ${e?.message ?? e}`);
+    err(paint(c.dim, "  if this is a permissions issue, re-run the installer:"));
+    err(paint(c.cyan, "    curl -fsSL https://www.signaagent.xyz/install.sh | bash"));
+    bail(1);
+  }
+
+  out(paint(c.green, "✓"), `upgraded to v${remoteVersion}.`);
+  out(
+    paint(c.yellow, "!"),
+    "the running process still has the old code in memory.",
+  );
+  out(paint(c.dim, "  exit + re-open the REPL (or restart your shell) to pick it up."));
+}
+
 async function startRepl() {
   IN_REPL = true;
   console.clear();
@@ -1696,7 +1949,23 @@ async function startRepl() {
     prompt: promptStr,
     terminal: true,
     historySize: 200,
+    // Tab completion. readline calls this synchronously on every TAB.
+    completer: replCompleter,
   });
+
+  // Hydrate history from disk so the user's up-arrow works across
+  // sessions. readline holds history newest-first; loadHistory returns
+  // newest-first too, so we can just assign.
+  try {
+    const persisted = await loadHistory();
+    if (persisted.length) {
+      // rl.history is a public-but-undocumented array. Push at the back
+      // so the user's existing in-session navigation isn't disrupted.
+      rl.history.push(...persisted);
+    }
+  } catch {
+    // ignore — history is best-effort
+  }
 
   // graceful ctrl-c — first press cancels current line, second press exits.
   // When a long-running command (watch, live) is active, yield: it has its
@@ -1710,6 +1979,11 @@ async function startRepl() {
     if (ctrlcArmed) {
       out("");
       out(paint(c.dim, "bye."));
+      // ctrl-c exit path runs in a signal handler — async writeFile would
+      // race the process exit and lose the last few commands. saveHistorySync
+      // is the right tool here, despite the usual "no sync I/O in handlers"
+      // rule, because we're already on the way out.
+      saveHistorySync(rl);
       rl.close();
       exit(0);
     }
@@ -1732,6 +2006,7 @@ async function startRepl() {
     }
     if (line === "exit" || line === "quit" || line === ":q") {
       out(paint(c.dim, "bye."));
+      await saveHistory(rl);
       rl.close();
       return;
     }
@@ -1848,6 +2123,9 @@ async function dispatchCommand(args, { fromRepl = false } = {}) {
       break;
     case "send":
       await cmdSend(rest);
+      break;
+    case "update":
+      await cmdUpdate(rest);
       break;
     case "version":
     case "-v":
