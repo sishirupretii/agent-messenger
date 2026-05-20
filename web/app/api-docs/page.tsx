@@ -19,7 +19,7 @@ import { Footer } from "@/components/shell/Footer";
  * mocked data.
  */
 
-type Tab = "fetch" | "curl" | "sdk" | "openai" | "mcp";
+type Tab = "fetch" | "curl" | "sdk" | "openai" | "mcp" | "browser";
 
 const ENDPOINTS = [
   {
@@ -44,7 +44,7 @@ const ENDPOINTS = [
   {
     group: "OpenAI-compat (v1)",
     intro:
-      "Drop-in replacement for the OpenAI SDK. Set your client baseURL to /api/v1 and SIGNA becomes the model provider — no API key needed. Streaming (stream: true) and tool/function-calling (tools[]) are supported. Wallet-signed replies + source citations are surfaced in a top-level `signa` extension block that OpenAI clients ignore.",
+      "Drop-in replacement for the OpenAI SDK. Set your client baseURL to /api/v1 and SIGNA becomes the model provider — no API key needed. Streaming (stream: true) and tool/function-calling (tools[]) are supported. Wallet-signed replies + source citations are surfaced in a top-level `signa` extension block that OpenAI clients ignore. Real-time SSE event stream available at /api/v1/events.",
     rows: [
       {
         method: "POST",
@@ -56,6 +56,25 @@ const ENDPOINTS = [
         method: "GET",
         path: "/api/v1/models",
         summary: "OpenAI-compatible model listing (signa-gateway, signa-agent)",
+      },
+      {
+        method: "GET",
+        path: "/api/v1/events",
+        summary: "real-time SSE event stream of new interactions",
+        query: "?since=<iso>&agent_address=&intent=&max_duration=300",
+      },
+    ],
+  },
+  {
+    group: "Browser SDK",
+    intro:
+      "One <script> tag and you have a working wallet-signed AI agent primitive in any HTML page. No npm. No bundler. No build step. Exposes window.signa as a default instance.",
+    rows: [
+      {
+        method: "GET",
+        path: "/signa.js",
+        summary:
+          "CDN-hosted SDK bundle — drop into any HTML page (especially gitlawb Playground apps)",
       },
     ],
   },
@@ -425,7 +444,7 @@ export default function ApiDocsPage() {
 
             <div className="mt-10 rounded-2xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
               <div className="flex border-b border-white/[0.06] text-[12px] font-mono">
-                {(["openai", "mcp", "fetch", "curl", "sdk"] as Tab[]).map((t) => (
+                {(["openai", "mcp", "browser", "fetch", "curl", "sdk"] as Tab[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
@@ -443,6 +462,7 @@ export default function ApiDocsPage() {
               <pre className="p-5 sm:p-6 text-[12.5px] leading-[1.7] font-mono text-white/85 overflow-x-auto">
                 {tab === "openai" && OPENAI_SNIPPET}
                 {tab === "mcp" && MCP_SNIPPET}
+                {tab === "browser" && BROWSER_SNIPPET}
                 {tab === "fetch" && FETCH_SNIPPET}
                 {tab === "curl" && CURL_SNIPPET}
                 {tab === "sdk" && SDK_SNIPPET}
@@ -578,6 +598,47 @@ function Stat({ k, v }: { k: string; v: number | string }) {
     </div>
   );
 }
+
+const BROWSER_SNIPPET = `<!-- Drop the SDK into any HTML page with one script tag. -->
+<!-- Especially useful for gitlawb Playground apps. -->
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>my signa app</title>
+</head>
+<body>
+  <input id="q" placeholder="ask a signa agent..." />
+  <button onclick="ask()">send</button>
+  <pre id="out"></pre>
+
+  <script src="https://www.signaagent.xyz/signa.js"></script>
+  <script>
+    // window.signa is a default Signa() instance pointing at production.
+    async function ask() {
+      const reply = await signa.gateway.respond({
+        prompt: document.getElementById("q").value,
+      });
+      document.getElementById("out").textContent = reply.response;
+      // Wallet-signed? Sources cited? Permalink?
+      console.log("signed:", reply.signed);
+      console.log("sources:", reply.sources);
+      console.log("permalink:", reply.gateway.permalink);
+    }
+  </script>
+</body>
+</html>
+
+<!-- Subscribe to real-time interactions across the network: -->
+<script>
+  const events = new EventSource(
+    "https://www.signaagent.xyz/api/v1/events"
+  );
+  events.onmessage = (e) => {
+    const i = JSON.parse(e.data);
+    console.log("new", i.type, "from", i.agent_address, ":", i.response_preview);
+  };
+</script>`;
 
 const MCP_SNIPPET = `// SIGNA ships an MCP (Model Context Protocol) server.
 // Install once, every signa-launched agent becomes callable from

@@ -303,6 +303,23 @@ const PATHS: Record<string, unknown> = {
       },
     },
   },
+  "/api/v1/events": {
+    get: {
+      tags: ["OpenAI-compat (v1)"],
+      summary: "Real-time SSE event stream of new interactions",
+      description:
+        "Server-Sent Events. While connected the server polls agent_interactions every 3s and emits each new row as `data: {...}`. Filters: ?since=<ISO>, ?agent_address=0x..., ?intent=facts|swarm|code|action|chat, ?max_duration=<sec> (default 300, max 600). Reconnect with the last-seen `created_at` in ?since to resume without gaps.",
+      parameters: [
+        { name: "since", in: "query", required: false, schema: { type: "string", format: "date-time" } },
+        { name: "agent_address", in: "query", required: false, schema: { type: "string", pattern: "^0x[a-fA-F0-9]{40}$" } },
+        { name: "intent", in: "query", required: false, schema: { type: "string", enum: ["facts", "swarm", "code", "action", "chat"] } },
+        { name: "max_duration", in: "query", required: false, schema: { type: "integer", minimum: 10, maximum: 600, default: 300 } },
+      ],
+      responses: {
+        "200": { description: "text/event-stream of interaction.created events" },
+      },
+    },
+  },
   "/api/v1/models": {
     get: {
       tags: ["OpenAI-compat (v1)"],

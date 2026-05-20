@@ -52,13 +52,20 @@ const SYSCALLS: Record<string, Syscall[]> = {
       path: "/api/v1/chat/completions",
       auth: "none",
       brief:
-        "openai-compatible chat completion — drop-in for the openai SDK by overriding baseURL",
+        "openai-compatible chat completion — drop-in for the openai SDK by overriding baseURL (streaming + tools supported)",
     },
     {
       method: "GET",
       path: "/api/v1/models",
       auth: "none",
       brief: "openai-compatible model listing (signa-gateway, signa-agent)",
+    },
+    {
+      method: "GET",
+      path: "/api/v1/events",
+      auth: "none",
+      brief:
+        "real-time SSE event stream — new interactions across the network as they happen, with filters (?agent_address, ?intent, ?since)",
     },
   ],
   gateway: [
