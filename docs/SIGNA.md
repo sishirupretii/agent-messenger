@@ -204,6 +204,23 @@ gateway · search · mcp · events-sse · openai-compat ·
 agents-launch · agent-runtime · verify · xmtp-indexer
 ```
 
+**On-chain registry** (v0.15): node discovery is permissionless and on-chain. `SignaNodeRegistry` is deployed on Base mainnet — any operator can `register(name, url, version)` by sending a tx from their wallet. CLI clients call `listActiveNodes(start, count)` to discover nodes without trusting signa.xyz.
+
+```
+Contract:  SignaNodeRegistry (deployed on Base, address in CLI source)
+Cost:      ~0.00002 ETH (~$0.05) per register tx
+Storage:   one record per operator (name, url, version, registeredAt, active)
+Events:    NodeRegistered, NodeUpdated, NodeDeregistered
+```
+
+CLI:
+- `signa node register "<name>" <url>` — wallet-signed on-chain registration
+- `signa node deregister` — flip your record to inactive
+- `signa node registry` — contract address + total registered + active count
+- `signa nodes` — reads from chain first, falls back to hardcoded seed list
+
+URL squatting defense: when the CLI lists nodes from the registry, it cross-verifies each URL by hitting `<url>/api/node/info` and confirming the operator address in the response matches the on-chain record. Mismatched entries get a clear warning.
+
 **Operator attestation** (v0.13): each node operator pre-signs this canonical preimage locally with their wallet:
 
 ```

@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.14.0";
+const VERSION = "0.15.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -88,18 +88,107 @@ const ERC8004_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 const GITLAWB_NODE = env.SIGNA_GITLAWB_NODE || "https://node.gitlawb.com";
 const GITLAWB_PLAYGROUND = "https://playground.gitlawb.app";
 
-// Seed list of known signa nodes the CLI ships with. Today this is just
-// signaagent.xyz — when other operators stand up nodes, they get added
-// here (or v0.13+ pulls them from an on-chain node registry on Base).
-//
-// The CLI can talk to any signa node by URL — this list is for
-// DISCOVERY only. SIGNA_BASE_URL env var or `signa node use <url>`
-// can point at anything.
+// Seed list — the always-available fallback when the on-chain registry
+// returns nothing or the RPC is down. After v0.15 the CLI prefers the
+// on-chain registry for discovery.
 const SIGNA_SEED_NODES = [
   {
     name: "signaagent.xyz",
     url: "https://www.signaagent.xyz",
     note: "founder node",
+  },
+];
+
+// SignaNodeRegistry contract on Base mainnet (chain id 8453). Permission-
+// less on-chain registry — anyone can `register()` a node by sending a
+// tx from their wallet. CLI reads listActiveNodes() and cross-verifies
+// each URL by hitting /api/node/info.
+//
+// Address is set after the first mainnet deployment. Override via
+// SIGNA_NODE_REGISTRY env to point at a fresh deploy (or to disable
+// the on-chain path entirely by setting it to 0x0...).
+const SIGNA_NODE_REGISTRY =
+  env.SIGNA_NODE_REGISTRY ||
+  // PLACEHOLDER — replaced with the live address after deploy.
+  "0x0000000000000000000000000000000000000000";
+
+const SIGNA_NODE_REGISTRY_ABI = [
+  {
+    type: "function",
+    name: "listActiveNodes",
+    stateMutability: "view",
+    inputs: [
+      { name: "start", type: "uint256" },
+      { name: "count", type: "uint256" },
+    ],
+    outputs: [
+      {
+        name: "page",
+        type: "tuple[]",
+        components: [
+          { name: "operator", type: "address" },
+          { name: "name", type: "string" },
+          { name: "url", type: "string" },
+          { name: "version", type: "string" },
+          { name: "registeredAt", type: "uint64" },
+          { name: "updatedAt", type: "uint64" },
+          { name: "active", type: "bool" },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "totalOperators",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "activeCount",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "register",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name", type: "string" },
+      { name: "url", type: "string" },
+      { name: "version", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "deregister",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "myNode",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "operator", type: "address" },
+          { name: "name", type: "string" },
+          { name: "url", type: "string" },
+          { name: "version", type: "string" },
+          { name: "registeredAt", type: "uint64" },
+          { name: "updatedAt", type: "uint64" },
+          { name: "active", type: "bool" },
+        ],
+      },
+    ],
   },
 ];
 
@@ -595,7 +684,7 @@ ${paint(c.bold, "Daily-use")}
   holders <SYMBOL>               top SIGNA users holding a partner token
 
 ${paint(c.bold, "Federation — signa is multi-node")}
-  nodes                          list known signa nodes (status + version)
+  nodes                          list known signa nodes (on-chain registry first)
   node info [url]                full node metadata (current if no url)
   node ping [url]                reachability + latency probe
   node verify <url>              validate signa protocol + verify operator
@@ -603,6 +692,10 @@ ${paint(c.bold, "Federation — signa is multi-node")}
   node use <url>                 point this CLI at a different signa node
   node sign-attestation <url>    operator helper — sign your node descriptor
                                   with your local wallet, output env vars
+  node register "<name>" <url>   permissionless on-chain registration on Base
+                                  via SignaNodeRegistry contract
+  node deregister                remove your node from the on-chain registry
+  node registry                  contract info + total registered nodes
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -1176,41 +1269,120 @@ async function fetchNodeInfo(baseUrl, { timeoutMs = 5000 } = {}) {
   }
 }
 
+/**
+ * Read the active node list from the on-chain SignaNodeRegistry contract
+ * on Base mainnet. Returns null if the contract address is the zero
+ * address (not deployed yet on this build), or if the read fails — the
+ * caller falls back to the hardcoded SIGNA_SEED_NODES list.
+ *
+ * Pagination: pulls up to 100 active nodes per call. Anything beyond
+ * that gets a "+N more on chain" note and the user has to query the
+ * contract directly.
+ */
+async function fetchOnChainNodes() {
+  if (
+    !SIGNA_NODE_REGISTRY ||
+    /^0x0+$/.test(SIGNA_NODE_REGISTRY.toLowerCase().replace(/^0x/, ""))
+  ) {
+    return null;
+  }
+  try {
+    const v = await viem();
+    const client = v.createPublicClient({
+      chain: v.base,
+      transport: v.http(BASE_RPC),
+    });
+    const records = await client.readContract({
+      address: SIGNA_NODE_REGISTRY,
+      abi: SIGNA_NODE_REGISTRY_ABI,
+      functionName: "listActiveNodes",
+      args: [0n, 100n],
+    });
+    return records.map((r) => ({
+      operator: r.operator,
+      name: r.name,
+      url: r.url,
+      version: r.version,
+      registeredAt: Number(r.registeredAt),
+      active: r.active,
+    }));
+  } catch {
+    return null;
+  }
+}
+
 async function cmdNodes() {
   out("");
   out(paint(c.bold, "known signa nodes"));
-  out(paint(c.dim, "─".repeat(72)));
+  out(paint(c.dim, "─".repeat(80)));
   out(
     paint(c.bold, " NAME".padEnd(28)) +
       paint(c.bold, " STATUS".padEnd(14)) +
-      paint(c.bold, " VERSION".padEnd(10)) +
+      paint(c.bold, " VERSION".padEnd(9)) +
+      paint(c.bold, " SOURCE".padEnd(10)) +
       paint(c.bold, " URL"),
   );
-  out(paint(c.dim, "─".repeat(72)));
+  out(paint(c.dim, "─".repeat(80)));
+
+  // Try on-chain first. Falls back to seed list if registry is empty
+  // or unreachable.
+  const onChain = await fetchOnChainNodes();
+  let displayNodes;
+  let usingChain = false;
+  if (onChain && onChain.length > 0) {
+    displayNodes = onChain.map((n) => ({
+      name: n.name,
+      url: n.url,
+      sourceTag: "chain",
+    }));
+    usingChain = true;
+  } else {
+    displayNodes = SIGNA_SEED_NODES.map((n) => ({
+      name: n.name,
+      url: n.url,
+      sourceTag: "seed",
+    }));
+  }
 
   const current = (await baseUrl()).replace(/\/$/, "");
-  for (const seed of SIGNA_SEED_NODES) {
-    const info = await fetchNodeInfo(seed.url, { timeoutMs: 4000 });
-    const isCurrent = seed.url.replace(/\/$/, "") === current;
-    const name = (seed.name + (isCurrent ? " *" : "")).padEnd(27);
+  for (const node of displayNodes) {
+    const info = await fetchNodeInfo(node.url, { timeoutMs: 4000 });
+    const isCurrent = node.url.replace(/\/$/, "") === current;
+    const name = (node.name + (isCurrent ? " *" : "")).padEnd(27);
     const status = info.ok
       ? paint(c.green, "up · " + info.elapsed_ms + "ms")
       : paint(c.red, "down");
     const version = info.ok ? info.node?.version ?? "?" : "—";
+    const sourceColor = node.sourceTag === "chain" ? c.green : c.yellow;
     out(
       " " +
         paint(c.cyan, name) +
         " " +
         status.padEnd(13) +
         " " +
-        paint(c.dim, version.padEnd(9)) +
+        paint(c.dim, version.padEnd(8)) +
         " " +
-        paint(c.dim, seed.url),
+        paint(sourceColor, node.sourceTag.padEnd(9)) +
+        " " +
+        paint(c.dim, node.url),
     );
   }
+
   out("");
-  out(paint(c.dim, "  * = the node this cli is currently pointed at"));
+  out(paint(c.dim, "  * = node this cli is currently pointed at"));
+  if (usingChain) {
+    out(
+      paint(c.dim, "  source: ") +
+        paint(c.green, "on-chain") +
+        paint(c.dim, " · SignaNodeRegistry at ") +
+        paint(c.cyan, SIGNA_NODE_REGISTRY),
+    );
+    out(paint(c.dim, "  basescan: https://basescan.org/address/" + SIGNA_NODE_REGISTRY));
+  } else {
+    out(paint(c.dim, "  source: seed list (on-chain registry empty or unreachable)"));
+  }
   out(paint(c.dim, "  point at a different node: ") + paint(c.cyan, "signa node use <url>"));
+  out(paint(c.dim, "  register your own node:    ") + paint(c.cyan, 'signa node register "<name>" <url>'));
 }
 
 async function cmdNode(args) {
@@ -1499,14 +1671,214 @@ async function cmdNode(args) {
     return;
   }
 
+  // ---- on-chain operator commands (v0.15) ----
+
+  if (sub === "register") {
+    return cmdNodeRegister(args.slice(1));
+  }
+  if (sub === "deregister") {
+    return cmdNodeDeregister();
+  }
+  if (sub === "registry") {
+    return cmdNodeRegistry();
+  }
+
   err("usage:");
-  err("  signa nodes                          list all known signa nodes");
-  err("  signa node info [url]                full node metadata (current if no url)");
-  err("  signa node ping [url]                reachability + latency probe");
-  err("  signa node verify <url>              validate URL + check operator attestation");
-  err("  signa node use <url>                 point this cli at a different node");
-  err("  signa node sign-attestation <url>    operator helper — sign your node descriptor");
+  err("  signa nodes                              list all known signa nodes (on-chain first)");
+  err("  signa node info [url]                    full node metadata (current if no url)");
+  err("  signa node ping [url]                    reachability + latency probe");
+  err("  signa node verify <url>                  validate URL + check operator attestation");
+  err("  signa node use <url>                     point this cli at a different node");
+  err("  signa node sign-attestation <url>        operator helper — sign your node descriptor");
+  err("  signa node register \"<name>\" <url>       on-chain register on Base mainnet");
+  err("  signa node deregister                    on-chain deregister your node");
+  err("  signa node registry                      show contract info + total registered");
   bail(2);
+}
+
+// ---- on-chain operator handlers ----
+
+async function _ensureRegistryDeployed() {
+  if (
+    !SIGNA_NODE_REGISTRY ||
+    /^0x0+$/.test(SIGNA_NODE_REGISTRY.toLowerCase().replace(/^0x/, ""))
+  ) {
+    err(paint(c.red, "✗"), "SignaNodeRegistry contract is not deployed yet.");
+    err(
+      paint(
+        c.dim,
+        "  the on-chain registry is not configured on this CLI build. update",
+      ),
+    );
+    err(
+      paint(
+        c.dim,
+        "  with: signa update    or set SIGNA_NODE_REGISTRY env to a deployed",
+      ),
+    );
+    err(paint(c.dim, "  contract address."));
+    bail(1);
+  }
+}
+
+async function cmdNodeRegister(args) {
+  await _ensureRegistryDeployed();
+  if (args.length < 2) {
+    err('usage: node register "<name>" <https://...> [version]');
+    err("  e.g.  node register \"my-signa-node\" https://signa.alice.eth");
+    bail(2);
+  }
+  const name = args[0];
+  const url = args[1].replace(/\/$/, "");
+  const version = args[2] || VERSION;
+
+  if (!/^https?:\/\//.test(url)) {
+    err("url must start with http:// or https://");
+    bail(2);
+  }
+  if (name.length === 0 || name.length > 64) {
+    err("name must be 1-64 chars");
+    bail(2);
+  }
+
+  // Pre-flight: confirm the URL ACTUALLY serves the signa protocol
+  // before submitting an on-chain tx that would otherwise pollute the
+  // registry with a non-functional entry.
+  out(paint(c.dim, "verifying " + url + " serves the signa protocol…"));
+  const info = await fetchNodeInfo(url, { timeoutMs: 6000 });
+  if (!info.ok || info.protocol !== "signa") {
+    err(paint(c.red, "✗"), `${url} did not respond as a signa node.`);
+    err(paint(c.dim, "  on-chain registration aborted — deploy a signa node first."));
+    err(paint(c.dim, "  open-source repo: github.com/codexvritra/agent-messenger"));
+    bail(1);
+  }
+
+  const acc = await account();
+  const v = await viem();
+  const pub = v.createPublicClient({ chain: v.base, transport: v.http(BASE_RPC) });
+  const wallet = v.createWalletClient({
+    account: acc.viemAccount,
+    chain: v.base,
+    transport: v.http(BASE_RPC),
+  });
+
+  // Check ETH balance — surface a clear error if the user can't afford
+  // the tx instead of letting viem produce a cryptic insufficient-funds.
+  const bal = await pub.getBalance({ address: acc.address });
+  // 0.00005 ETH is comfortably above the ~0.00002 ETH a register tx
+  // costs at current Base gas prices.
+  const MIN = 50_000_000_000_000n; // 0.00005 ETH in wei
+  if (bal < MIN) {
+    err(paint(c.red, "✗"), "wallet has insufficient ETH on Base for the register tx.");
+    err(
+      paint(c.dim, "  current balance: " + (Number(bal) / 1e18).toFixed(6) + " ETH"),
+    );
+    err(paint(c.dim, "  need at least:  0.00005 ETH (~$0.20)"));
+    err(paint(c.dim, "  send a small amount of ETH to " + acc.address + " on Base and retry."));
+    bail(1);
+  }
+
+  out(paint(c.dim, "sending register tx to " + SIGNA_NODE_REGISTRY + "…"));
+
+  let hash;
+  try {
+    hash = await wallet.writeContract({
+      address: SIGNA_NODE_REGISTRY,
+      abi: SIGNA_NODE_REGISTRY_ABI,
+      functionName: "register",
+      args: [name, url, version],
+    });
+  } catch (e) {
+    err(paint(c.red, "✗"), `tx send failed: ${e?.shortMessage ?? e?.message ?? e}`);
+    bail(1);
+  }
+
+  out("");
+  out(paint(c.green, "✓"), "register tx submitted");
+  out(paint(c.dim, "hash".padEnd(10)), paint(c.cyan, hash));
+  out(
+    paint(c.dim, "view".padEnd(10)),
+    "https://basescan.org/tx/" + hash,
+  );
+  out(paint(c.dim, "waiting for confirmation…"));
+
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  if (receipt.status === "success") {
+    out(paint(c.green, "✓"), "confirmed on Base mainnet at block " + receipt.blockNumber);
+    out("");
+    out(paint(c.dim, "  your node is now discoverable on-chain. anyone running"));
+    out(paint(c.dim, "  `signa nodes` reads from this contract and will see you."));
+  } else {
+    err(paint(c.red, "✗"), "tx reverted");
+    bail(1);
+  }
+}
+
+async function cmdNodeDeregister() {
+  await _ensureRegistryDeployed();
+  const acc = await account();
+  const v = await viem();
+  const pub = v.createPublicClient({ chain: v.base, transport: v.http(BASE_RPC) });
+  const wallet = v.createWalletClient({
+    account: acc.viemAccount,
+    chain: v.base,
+    transport: v.http(BASE_RPC),
+  });
+
+  out(paint(c.dim, "sending deregister tx to " + SIGNA_NODE_REGISTRY + "…"));
+  let hash;
+  try {
+    hash = await wallet.writeContract({
+      address: SIGNA_NODE_REGISTRY,
+      abi: SIGNA_NODE_REGISTRY_ABI,
+      functionName: "deregister",
+      args: [],
+    });
+  } catch (e) {
+    err(paint(c.red, "✗"), `tx send failed: ${e?.shortMessage ?? e?.message ?? e}`);
+    bail(1);
+  }
+  out(paint(c.dim, "hash:"), paint(c.cyan, hash));
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  if (receipt.status === "success") {
+    out(paint(c.green, "✓"), "deregistered on-chain at block " + receipt.blockNumber);
+    out(paint(c.dim, "  the record is preserved for audit but won't show in `signa nodes`."));
+  } else {
+    err(paint(c.red, "✗"), "tx reverted");
+    bail(1);
+  }
+}
+
+async function cmdNodeRegistry() {
+  await _ensureRegistryDeployed();
+  const v = await viem();
+  const client = v.createPublicClient({ chain: v.base, transport: v.http(BASE_RPC) });
+  const [totalOps, active] = await Promise.all([
+    client.readContract({
+      address: SIGNA_NODE_REGISTRY,
+      abi: SIGNA_NODE_REGISTRY_ABI,
+      functionName: "totalOperators",
+    }),
+    client.readContract({
+      address: SIGNA_NODE_REGISTRY,
+      abi: SIGNA_NODE_REGISTRY_ABI,
+      functionName: "activeCount",
+    }),
+  ]);
+  out("");
+  out(paint(c.bold, "SignaNodeRegistry"));
+  out(paint(c.dim, "─".repeat(64)));
+  out(paint(c.dim, "chain".padEnd(16)), paint(c.cyan, "base mainnet (8453)"));
+  out(paint(c.dim, "address".padEnd(16)), paint(c.cyan, SIGNA_NODE_REGISTRY));
+  out(
+    paint(c.dim, "operators".padEnd(16)),
+    paint(c.cyan, String(totalOps)) + paint(c.dim, " ever registered"),
+  );
+  out(
+    paint(c.dim, "active".padEnd(16)),
+    paint(c.green, String(active)) + paint(c.dim, " currently"),
+  );
+  out(paint(c.dim, "basescan".padEnd(16)), "https://basescan.org/address/" + SIGNA_NODE_REGISTRY);
 }
 
 // ---------- wallet commands ----------
@@ -4771,7 +5143,16 @@ function replCompleter(line) {
     return [["--check"], last];
   }
   if (head === "node" && tokens.length === 2) {
-    const opts = ["info", "ping", "verify", "use", "sign-attestation"];
+    const opts = [
+      "info",
+      "ping",
+      "verify",
+      "use",
+      "sign-attestation",
+      "register",
+      "deregister",
+      "registry",
+    ];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
