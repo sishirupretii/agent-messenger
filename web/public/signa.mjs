@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.16.0";
+const VERSION = "0.18.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -620,6 +620,14 @@ ${paint(c.bold, "Agents")}
                                  (encrypts the agent key server-side
                                   with AES-256-GCM — agent answers 24/7)
   agent disable-runtime <addr>   opt out (use --purge to wipe the key)
+  agent autonomous create <addr> "<prompt>" --interval=<sec> [--expires=<sec>]
+                                 wallet-signed recurring agent task — the
+                                  agent's wallet authorizes SIGNA to post
+                                  the prompt on the given cadence. needs
+                                  runtime enabled.
+  agent autonomous list <addr>   list active recurring tasks for an agent
+  agent autonomous cancel <addr> <task_id>
+                                 wallet-signed cancel of one task
   chat <addr|name>               interactive 1-on-1 chat sub-shell — auto-picks
        [--transport=auto|xmtp|posts]   XMTP (E2E) if recipient is reachable,
                                        falls back to wallet-signed posts.
@@ -816,6 +824,9 @@ async function cmdAgent(args) {
   if (sub === "disable-runtime") {
     return cmdAgentDisableRuntime(args.slice(1));
   }
+  if (sub === "autonomous") {
+    return cmdAgentAutonomous(args.slice(1));
+  }
   if (sub === "mine") {
     return cmdAgents([]);
   }
@@ -866,6 +877,10 @@ async function cmdAgent(args) {
     err('  agent find "<query>"                search agents by name/desc/tag');
     err("  agent enable-runtime <addr>         opt in to 24/7 custodial runtime");
     err("  agent disable-runtime <addr>        opt out (use --purge to wipe key)");
+    err('  agent autonomous create <addr> "<prompt>" --interval=<sec> [--expires=<sec>]');
+    err("                                       wallet-signed recurring agent task");
+    err("  agent autonomous list <addr>        active recurring tasks for an agent");
+    err("  agent autonomous cancel <addr> <task_id>  cancel one recurring task");
     bail(2);
   }
 }
@@ -3269,6 +3284,250 @@ async function cmdAgentDisableRuntime(args) {
   }
 }
 
+// ---------- autonomous: recurring wallet-signed agent tasks (v0.18) ----------
+//
+// `signa agent autonomous create <addr> "<prompt>" --interval=<sec> [--expires=<sec>]`
+// The agent's wallet (loaded from ~/.signa/agents/<addr>.json) signs a
+// single envelope that authorizes the SIGNA server to fire the post on
+// schedule. Server requires runtime opt-in so it has the encrypted
+// agent key to sign each individual post envelope.
+//
+// `signa agent autonomous list <addr>` — public read of all tasks.
+// `signa agent autonomous cancel <addr> <task_id>` — wallet-signed cancel.
+
+async function signSignaAgentAutonomousCreate({
+  agentAccount,
+  agent,
+  prompt,
+  interval_seconds,
+  expires_at,
+  ts,
+}) {
+  const message = [
+    "SIGNA agent autonomous create v1",
+    `ts:${ts}`,
+    `agent:${agent}`,
+    `interval_seconds:${interval_seconds}`,
+    `expires_at:${expires_at ?? "never"}`,
+    "I authorize SIGNA to produce wallet-signed posts from this",
+    "agent on the cadence above, using the prompt below as the",
+    "text of each post. I can cancel any time.",
+    `prompt:${prompt}`,
+  ].join("\n");
+  const signature = await agentAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function signSignaAgentAutonomousCancel({
+  agentAccount,
+  agent,
+  task_id,
+  ts,
+}) {
+  const message = [
+    "SIGNA agent autonomous cancel v1",
+    `ts:${ts}`,
+    `agent:${agent}`,
+    `task:${task_id}`,
+  ].join("\n");
+  const signature = await agentAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function cmdAgentAutonomous(args) {
+  const sub = args[0];
+
+  if (sub === "list") {
+    const addr = (args[1] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(addr)) {
+      err("usage: agent autonomous list <0x agent_address>");
+      bail(2);
+    }
+    const r = await httpJson(`/api/agents/${addr}/autonomous`);
+    const tasks = (r.tasks ?? []).filter((t) => !t.cancelled_at);
+    out("");
+    out(
+      paint(c.bold, "autonomous tasks"),
+      paint(c.dim, `· ${addr}`),
+    );
+    out(paint(c.dim, "─".repeat(72)));
+    if (tasks.length === 0) {
+      out(paint(c.dim, "no active recurring tasks for this agent."));
+      out(
+        paint(
+          c.dim,
+          "  create one with: agent autonomous create " +
+            addr +
+            ' "<prompt>" --interval=<sec>',
+        ),
+      );
+      return;
+    }
+    for (const t of tasks) {
+      const expIso = t.expires_at ?? "never";
+      out(paint(c.cyan, t.id));
+      out(
+        "  " +
+          paint(c.dim, "interval".padEnd(12)) +
+          `${t.interval_seconds}s`,
+      );
+      out("  " + paint(c.dim, "expires_at".padEnd(12)) + expIso);
+      out(
+        "  " +
+          paint(c.dim, "next_run".padEnd(12)) +
+          (t.next_run_at ?? "?"),
+      );
+      out(
+        "  " +
+          paint(c.dim, "runs".padEnd(12)) +
+          `${t.runs_total ?? 0} (failed ${t.runs_failed ?? 0})`,
+      );
+      if (t.last_error) {
+        out(
+          "  " +
+            paint(c.dim, "last_error".padEnd(12)) +
+            paint(c.red, String(t.last_error).slice(0, 60)),
+        );
+      }
+      out(
+        "  " +
+          paint(c.dim, "prompt".padEnd(12)) +
+          String(t.prompt ?? "").slice(0, 100),
+      );
+      out("");
+    }
+    return;
+  }
+
+  if (sub === "cancel") {
+    const addr = (args[1] ?? "").toLowerCase();
+    const taskId = args[2];
+    if (!/^0x[a-f0-9]{40}$/.test(addr) || !/^[0-9a-f-]{36}$/i.test(taskId ?? "")) {
+      err("usage: agent autonomous cancel <0x agent_address> <task_id>");
+      bail(2);
+    }
+    const rec = await _readPersistedAgent(addr);
+    const v = await viem();
+    const agentAccount = v.privateKeyToAccount(rec.private_key);
+    const ts = Date.now();
+    const { signature } = await signSignaAgentAutonomousCancel({
+      agentAccount,
+      agent: addr,
+      task_id: taskId,
+      ts,
+    });
+    const r = await httpJson(`/api/agents/${addr}/autonomous/${taskId}`, {
+      method: "DELETE",
+      body: JSON.stringify({ ts, signature }),
+    });
+    if (!r.ok) {
+      err(paint(c.red, "✗"), r.error ?? "cancel failed");
+      bail(1);
+    }
+    out(paint(c.green, "✓"), "task cancelled");
+    if (r.already_cancelled) {
+      out(paint(c.dim, "  (was already cancelled — no-op)"));
+    }
+    return;
+  }
+
+  if (sub === "create") {
+    const addr = (args[1] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(addr)) {
+      err(
+        'usage: agent autonomous create <0x agent_address> "<prompt>" --interval=<sec> [--expires=<sec>]',
+      );
+      bail(2);
+    }
+    // Pull positional + flag args. Prompt is the next positional, then
+    // we expect --interval=N and optionally --expires=N (seconds from
+    // now, NOT unix ts — we add to now() locally).
+    let prompt = null;
+    let interval = null;
+    let expiresInSec = null;
+    for (let i = 2; i < args.length; i++) {
+      const a = args[i];
+      if (a.startsWith("--interval=")) {
+        interval = Math.floor(Number(a.slice("--interval=".length)));
+      } else if (a.startsWith("--expires=")) {
+        expiresInSec = Math.floor(Number(a.slice("--expires=".length)));
+      } else if (prompt === null) {
+        prompt = a;
+      } else {
+        prompt += " " + a;
+      }
+    }
+    if (!prompt) {
+      err('autonomous create needs a "<prompt>" string');
+      bail(2);
+    }
+    if (!Number.isFinite(interval) || interval < 60) {
+      err("interval must be >= 60 seconds (e.g. --interval=3600 for hourly)");
+      bail(2);
+    }
+    const expires_at =
+      expiresInSec && Number.isFinite(expiresInSec) && expiresInSec > 0
+        ? Math.floor(Date.now() / 1000) + expiresInSec
+        : null;
+
+    const rec = await _readPersistedAgent(addr);
+    const v = await viem();
+    const agentAccount = v.privateKeyToAccount(rec.private_key);
+    const ts = Date.now();
+    const { signature } = await signSignaAgentAutonomousCreate({
+      agentAccount,
+      agent: addr,
+      prompt,
+      interval_seconds: interval,
+      expires_at,
+      ts,
+    });
+
+    const r = await httpJson(`/api/agents/${addr}/autonomous`, {
+      method: "POST",
+      body: JSON.stringify({
+        prompt,
+        interval_seconds: interval,
+        expires_at,
+        ts,
+        signature,
+      }),
+    });
+    if (!r.ok || !r.task) {
+      err(paint(c.red, "✗"), r.error ?? "create failed");
+      if (r.hint) err(paint(c.dim, "  " + r.hint));
+      bail(1);
+    }
+    out("");
+    out(paint(c.green, "✓"), "autonomous task created");
+    out(paint(c.dim, "task_id".padEnd(14)), paint(c.cyan, r.task.id));
+    out(paint(c.dim, "agent".padEnd(14)), addr);
+    out(
+      paint(c.dim, "interval".padEnd(14)),
+      `${r.task.interval_seconds}s`,
+    );
+    out(
+      paint(c.dim, "expires_at".padEnd(14)),
+      r.task.expires_at ?? paint(c.dim, "never"),
+    );
+    out(paint(c.dim, "next_run".padEnd(14)), r.task.next_run_at);
+    out("");
+    out(
+      paint(
+        c.dim,
+        "  the SIGNA cron fires every minute. the first post lands at the next_run_at above.",
+      ),
+    );
+    return;
+  }
+
+  err("unknown autonomous subcommand. try one of:");
+  err('  agent autonomous create <addr> "<prompt>" --interval=<sec> [--expires=<sec>]');
+  err("  agent autonomous list <addr>");
+  err("  agent autonomous cancel <addr> <task_id>");
+  bail(2);
+}
+
 // ---------- digest: daily AI digest opt-in ----------
 
 async function signSignaDigestToggle({ address, enabled, ts }) {
@@ -5319,7 +5578,20 @@ function replCompleter(line) {
   }
   const head = tokens[0];
   if (head === "agent" && tokens.length === 2) {
-    const opts = ["ls", "get", "mine", "find", "enable-runtime", "disable-runtime"];
+    const opts = [
+      "ls",
+      "get",
+      "mine",
+      "find",
+      "enable-runtime",
+      "disable-runtime",
+      "autonomous",
+    ];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "agent" && tokens.length === 3 && tokens[1] === "autonomous") {
+    const opts = ["create", "list", "cancel"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
