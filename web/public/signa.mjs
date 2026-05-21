@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -699,6 +699,11 @@ ${paint(c.bold, "Federation — signa is multi-node")}
                                   via SignaNodeRegistry contract
   node deregister                remove your node from the on-chain registry
   node registry                  contract info + total registered nodes
+  sync status                    per-peer cross-node sync state (last sync,
+                                  posts pulled, errors) + total imported
+  sync run                       operator-only: trigger one sync pass now
+                                  (needs SIGNA_CRON_SECRET in env;
+                                   scheduled runs fire every 10m anyway)
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -1882,6 +1887,218 @@ async function cmdNodeRegistry() {
     paint(c.green, String(active)) + paint(c.dim, " currently"),
   );
   out(paint(c.dim, "basescan".padEnd(16)), "https://basescan.org/address/" + SIGNA_NODE_REGISTRY);
+}
+
+// ---------- federation: cross-node sync (v0.16) ----------
+//
+// signa is federable — every active node in the on-chain SignaNodeRegistry
+// gossips wallet-signed posts to every other active node every 10 minutes.
+// The CLI surfaces this in two ways:
+//
+//   signa sync status        — per-peer sync state for the configured
+//                              node (last_synced_at, posts_pulled,
+//                              last_error, etc.) + total imported posts
+//   signa sync run           — operator-only: trigger an out-of-band
+//                              sync pass via /api/cron/sync-nodes. Needs
+//                              SIGNA_CRON_SECRET in env to authorize the
+//                              bearer header. Without it, prints the
+//                              schedule + how to set the secret.
+//
+// The federation worker is at /api/cron/sync-nodes — schedule lives in
+// vercel.json (every 10 minutes). Re-verifies each post's signature
+// locally before importing, so peer nodes are cryptographically untrusted.
+
+function _fmtAgo(iso) {
+  if (!iso) return paint(c.dim, "never");
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(d) || d < 0) return paint(c.dim, "?");
+  if (d < 60) return `${Math.floor(d)}s ago`;
+  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
+  return `${Math.floor(d / 86400)}d ago`;
+}
+
+async function cmdSync(args) {
+  const sub = args[0] || "status";
+
+  if (sub === "status") {
+    const r = await httpJson("/api/sync/status");
+    if (!r?.ok) {
+      err(paint(c.red, "✗"), "sync status read failed");
+      bail(1);
+    }
+    const peers = r.peers ?? [];
+    out("");
+    out(
+      paint(c.bold, "signa federation"),
+      paint(c.dim, `· ${await baseUrl()}`),
+    );
+    out(paint(c.dim, "─".repeat(72)));
+    out(
+      paint(c.dim, "imported".padEnd(14)),
+      paint(c.cyan, String(r.imported_total ?? 0)) +
+        paint(c.dim, " posts from peers"),
+    );
+    out(
+      paint(c.dim, "peers".padEnd(14)),
+      paint(c.cyan, String(peers.length)) +
+        paint(c.dim, " seen by this node"),
+    );
+    out(
+      paint(c.dim, "checked".padEnd(14)),
+      paint(c.dim, new Date(r.generated_at).toISOString()),
+    );
+    out("");
+    if (peers.length === 0) {
+      out(
+        paint(
+          c.dim,
+          "no peer sync runs yet — the worker fires every 10m via vercel cron.",
+        ),
+      );
+      out(
+        paint(
+          c.dim,
+          "register a new node and within 10m it appears here.",
+        ),
+      );
+      return;
+    }
+    out(paint(c.bold, "per-peer"));
+    out(paint(c.dim, "─".repeat(72)));
+    for (const p of peers) {
+      const errBadge =
+        (p.errors_total ?? 0) > 0
+          ? paint(c.red, `errors ${p.errors_total}`)
+          : paint(c.green, "ok");
+      const name = p.node_name || p.node_url || p.operator;
+      out(paint(c.cyan, name) + "  " + errBadge);
+      out(
+        "  " +
+          paint(c.dim, "url".padEnd(12)) +
+          (p.node_url ?? paint(c.dim, "?")),
+      );
+      out(
+        "  " +
+          paint(c.dim, "operator".padEnd(12)) +
+          (p.operator ?? paint(c.dim, "?")),
+      );
+      out(
+        "  " +
+          paint(c.dim, "last sync".padEnd(12)) +
+          _fmtAgo(p.last_synced_at) +
+          paint(c.dim, ` (pulled ${p.posts_pulled ?? 0})`),
+      );
+      out(
+        "  " +
+          paint(c.dim, "last post".padEnd(12)) +
+          _fmtAgo(p.last_post_at),
+      );
+      if (p.last_error) {
+        out(
+          "  " +
+            paint(c.dim, "last err".padEnd(12)) +
+            paint(c.red, String(p.last_error).slice(0, 60)),
+        );
+      }
+      out("");
+    }
+    return;
+  }
+
+  if (sub === "run") {
+    const secret = env.SIGNA_CRON_SECRET || env.CRON_SECRET;
+    if (!secret) {
+      err(paint(c.red, "✗"), "operator credential required.");
+      err(
+        "  set",
+        paint(c.cyan, "SIGNA_CRON_SECRET"),
+        "to the value of the CRON_SECRET on your deployment",
+      );
+      err(
+        "  (the secret Vercel cron uses to authenticate scheduled invocations).",
+      );
+      err(
+        paint(
+          c.dim,
+          "  scheduled runs happen automatically every 10 minutes — this is for on-demand triggers.",
+        ),
+      );
+      bail(1);
+    }
+    out(paint(c.dim, "triggering /api/cron/sync-nodes …"));
+    const base = await baseUrl();
+    const t0 = Date.now();
+    let res;
+    try {
+      res = await fetch(`${base}/api/cron/sync-nodes`, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${secret}`,
+          "user-agent": `signa-cli/${VERSION}`,
+          accept: "application/json",
+        },
+      });
+    } catch (e) {
+      err(paint(c.red, "✗"), `fetch failed: ${e?.message ?? e}`);
+      bail(1);
+    }
+    if (!res.ok) {
+      err(paint(c.red, "✗"), `HTTP ${res.status}`);
+      try {
+        err(paint(c.dim, (await res.text()).slice(0, 400)));
+      } catch {}
+      bail(1);
+    }
+    const json = await res.json();
+    const elapsed = Date.now() - t0;
+    out("");
+    out(
+      paint(c.green, "✓"),
+      `sync pass complete in ${elapsed}ms · ${
+        json.peers_checked ?? 0
+      } peers checked`,
+    );
+    out(paint(c.dim, "─".repeat(72)));
+    let totalPulled = 0;
+    let totalImported = 0;
+    let totalFailed = 0;
+    for (const r of json.results ?? []) {
+      totalPulled += r.pulled ?? 0;
+      totalImported += r.imported ?? 0;
+      totalFailed += r.failed_verify ?? 0;
+      const badge =
+        (r.errors?.length ?? 0) > 0
+          ? paint(c.red, "err")
+          : paint(c.green, "ok");
+      out(
+        "  " +
+          badge +
+          " " +
+          paint(c.cyan, r.name || r.url) +
+          paint(
+            c.dim,
+            ` · pulled ${r.pulled ?? 0} · imported ${r.imported ?? 0} · failed_verify ${r.failed_verify ?? 0}`,
+          ),
+      );
+      if ((r.errors?.length ?? 0) > 0) {
+        out(
+          "    " +
+            paint(c.red, r.errors.join("; ").slice(0, 100)),
+        );
+      }
+    }
+    out("");
+    out(
+      paint(c.dim, "totals".padEnd(14)),
+      `pulled=${totalPulled} imported=${totalImported} failed_verify=${totalFailed}`,
+    );
+    return;
+  }
+
+  err(`unknown sync subcommand: ${sub}`);
+  err("usage: sync status | sync run");
+  bail(2);
 }
 
 // ---------- wallet commands ----------
@@ -5077,7 +5294,7 @@ const REPL_COMMANDS = [
   "verify", "portfolio", "trending", "token", "watchlist",
   "digest", "holders",
   "update",
-  "nodes", "node",
+  "nodes", "node", "sync",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
 ];
@@ -5156,6 +5373,11 @@ function replCompleter(line) {
       "deregister",
       "registry",
     ];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "sync" && tokens.length === 2) {
+    const opts = ["status", "run"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
@@ -5649,6 +5871,9 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "node":
       await cmdNode(rest);
+      break;
+    case "sync":
+      await cmdSync(rest);
       break;
     case "version":
     case "-v":

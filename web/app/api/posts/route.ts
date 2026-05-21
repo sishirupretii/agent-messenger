@@ -20,11 +20,16 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const cursor = sp.get("cursor");
+  const since = sp.get("since"); // forward cursor used by /api/cron/sync-nodes
   const author = sp.get("author")?.toLowerCase();
   const parent = sp.get("parent");
   const viewer = sp.get("viewer")?.toLowerCase();
   const mentionsRaw = sp.get("mentions");
-  const limit = Math.min(Number(sp.get("limit") ?? 30), 50);
+  const limit = Math.min(Number(sp.get("limit") ?? 30), 100);
+  // include=signature triggers per-post signature + signed_message in
+  // the listing response so cross-node sync workers can re-verify each
+  // entry locally before importing.
+  const includeSignature = sp.get("include") === "signature";
 
   // Validate the mentions filter strictly — never let user input flow
   // into ILIKE without an explicit 0x-shape check, or we'd open a wide
@@ -41,19 +46,26 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Build the SELECT list — append signature + signed_message + the
+  // source_node tracking fields when sync workers ask for them.
+  const selectCols = includeSignature
+    ? `id, author_address, content, parent_id, created_at, signature, signed_message, source_node, source_node_url,
+       author:users!posts_author_address_fkey(address, basename, ens_name, registered_at)`
+    : `id, author_address, content, parent_id, created_at,
+       author:users!posts_author_address_fkey(address, basename, ens_name, registered_at)`;
+
+  // When `since` is given, switch to forward pagination (newest first
+  // is still the default, but we filter posts created AFTER the cursor
+  // so a sync worker can pull only delta).
   let q = supabase
     .from("posts")
-    .select(
-      `
-      id, author_address, content, parent_id, created_at,
-      author:users!posts_author_address_fkey(address, basename, ens_name, registered_at)
-    `,
-    )
+    .select(selectCols)
     .is("deleted_at", null)
-    .order("created_at", { ascending: false })
+    .order("created_at", { ascending: since ? true : false })
     .limit(limit);
 
   if (cursor) q = q.lt("created_at", cursor);
+  if (since) q = q.gt("created_at", since);
   if (author) q = q.eq("author_address", author);
   if (parent) q = q.eq("parent_id", parent);
   else if (!author && !mentions) q = q.is("parent_id", null); // global feed = top-level only
