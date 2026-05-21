@@ -5,7 +5,11 @@ import { WagmiProvider, type State } from "wagmi";
 import { RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { base } from "wagmi/chains";
-import { wagmiConfig } from "@/lib/wagmi";
+// CLIENT config — has the full RainbowKit wallet roster (Coinbase,
+// MetaMask, Rainbow, Trust, Phantom, OKX, Brave, Ledger, WalletConnect,
+// Injected). The server-side `wagmiConfig` (from lib/wagmi.ts) is used
+// only in the root layout for `cookieToInitialState` chain decode.
+import { clientWagmiConfig } from "@/lib/wagmi-client";
 import { ChatProvider } from "@/context/ChatProvider";
 
 /**
@@ -26,7 +30,7 @@ export function Providers({
   const [queryClient] = useState(() => new QueryClient());
 
   return (
-    <WagmiProvider config={wagmiConfig} initialState={initialState}>
+    <WagmiProvider config={clientWagmiConfig} initialState={initialState}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider
           theme={darkTheme({
