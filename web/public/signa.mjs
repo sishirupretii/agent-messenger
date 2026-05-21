@@ -104,13 +104,16 @@ const SIGNA_SEED_NODES = [
 // tx from their wallet. CLI reads listActiveNodes() and cross-verifies
 // each URL by hitting /api/node/info.
 //
-// Address is set after the first mainnet deployment. Override via
-// SIGNA_NODE_REGISTRY env to point at a fresh deploy (or to disable
-// the on-chain path entirely by setting it to 0x0...).
+// Deployed: 2026-05-21 on Base mainnet.
+// Source:   contracts/src/SignaNodeRegistry.sol
+// Basescan: https://basescan.org/address/0x4316De3847629705C401F8FaF0cecdb40bd68E5A
+//
+// Override via SIGNA_NODE_REGISTRY env to point at a fresh deploy on
+// another chain (or to disable the on-chain path entirely by setting
+// it to 0x0...).
 const SIGNA_NODE_REGISTRY =
   env.SIGNA_NODE_REGISTRY ||
-  // PLACEHOLDER — replaced with the live address after deploy.
-  "0x0000000000000000000000000000000000000000";
+  "0x4316De3847629705C401F8FaF0cecdb40bd68E5A";
 
 const SIGNA_NODE_REGISTRY_ABI = [
   {
