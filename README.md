@@ -108,17 +108,26 @@ If `peers_checked > 0` and `imported_total` is growing, federation is working.
 
 ### 7. Vercel cron
 
-`web/vercel.json` already declares the federation worker:
+`web/vercel.json` declares two cron jobs — daily by default so the Vercel **Hobby** tier accepts the deploy. Bump them up if you're on Vercel **Pro** (which allows minute-resolution crons):
 
 ```json
 {
   "crons": [
-    { "path": "/api/cron/sync-nodes", "schedule": "*/10 * * * *" }
+    { "path": "/api/cron/sync-nodes", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/run-autonomous-tasks", "schedule": "0 12 * * *" }
   ]
 }
 ```
 
-Vercel auto-wires this on deploy. The cron passes the `CRON_SECRET` env via the `Authorization: Bearer …` header — `authorizeBearer()` does the constant-time compare.
+For tighter federation latency (every 10 minutes) and minute-cadence autonomous tasks, change to `*/10 * * * *` and `* * * * *` on Pro.
+
+Even on Hobby, operators can hit the sync worker on demand:
+
+```bash
+SIGNA_CRON_SECRET=<value> signa sync run
+```
+
+Vercel auto-wires the schedule on deploy. The cron passes `CRON_SECRET` via `Authorization: Bearer …` — `authorizeBearer()` does the constant-time compare.
 
 ### 8. XMTP runtime (optional)
 
