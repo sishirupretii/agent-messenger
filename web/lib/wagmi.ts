@@ -5,67 +5,35 @@ import {
   cookieStorage,
   createStorage,
 } from "wagmi";
-import {
-  injected,
-  metaMask,
-  coinbaseWallet,
-  walletConnect,
-} from "wagmi/connectors";
-
-// Read but tolerate missing — falling back to a stub keeps `next build`
-// happy on machines without local env. Vercel deploys always have it set
-// and we never actually open a WalletConnect session without it (RainbowKit
-// only surfaces the WC option after page hydration). If somebody clicks
-// the WC option without a real id they'll see an in-modal error, which is
-// the right user-visible failure mode.
-const projectId =
-  process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ??
-  "MISSING_WALLETCONNECT_PROJECT_ID";
-
-if (
-  projectId === "MISSING_WALLETCONNECT_PROJECT_ID" &&
-  typeof window !== "undefined"
-) {
-  console.warn(
-    "[wagmi] NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is not set — WalletConnect connector disabled. Set it in Vercel env or .env.local.",
-  );
-}
+import { injected } from "wagmi/connectors";
 
 /**
- * SIGNA wagmi config.
+ * SIGNA wagmi config — SERVER-SAFE.
  *
- * Uses wagmi's primitive `createConfig` (NOT RainbowKit's
- * `getDefaultConfig`) so this module is safely importable from server
- * components — the root layout calls `cookieToInitialState(wagmiConfig, …)`
- * to hydrate wallet state on every server-rendered route.
+ * This module is imported from the root layout (server component) for
+ * `cookieToInitialState(wagmiConfig, cookieString)`, which hydrates
+ * wallet state from the wagmi.store cookie at SSR time. To stay
+ * server-safe we use ONLY wagmi's primitive `injected` connector —
+ * no RainbowKit, no browser-only APIs.
  *
- * RainbowKit's UI (`RainbowKitProvider`, `ConnectButton`) sits on top of
- * this config in providers.tsx and works with any wagmi config — it
- * doesn't require getDefaultConfig.
+ * The actual client-side WagmiProvider uses `clientWagmiConfig` from
+ * `lib/wagmi-client.ts`, which adds RainbowKit's full wallet roster
+ * (Coinbase, MetaMask, Rainbow, Trust, Phantom, OKX, Brave, Ledger,
+ * WalletConnect, plus injected) for mobile deep-links and broad
+ * wallet support.
  *
- * Storage = cookieStorage so the wallet connection survives navigations
- * to force-dynamic pages (/feed/bankr, /agent/[addr], /launchpad).
+ * Why two configs:
+ *   RainbowKit's `connectorsForWallets()` runs wallet-detection
+ *   browser code at import time, so it cannot be imported into a
+ *   server component. Wagmi itself supports the split — the
+ *   chain state in the cookie is interoperable between configs
+ *   that share the same `chains` array.
  */
 export const wagmiConfig = createConfig({
   // base = primary app chain (real ETH, real txs).
   // mainnet = ENS reverse + Basenames (via ENSIP-19 coinType) read from base too.
   chains: [base, mainnet],
-  connectors: [
-    injected({ shimDisconnect: true }),
-    metaMask(),
-    coinbaseWallet({ appName: "SIGNA", preference: "all" }),
-    walletConnect({
-      projectId,
-      metadata: {
-        name: "SIGNA",
-        description:
-          "Wallet-native messaging on Base. Spawn agents, chat, tip.",
-        url: "https://www.signaagent.xyz",
-        icons: ["https://www.signaagent.xyz/icon.png"],
-      },
-      showQrModal: true,
-    }),
-  ],
+  connectors: [injected({ shimDisconnect: true })],
   transports: {
     [base.id]: http(),
     [mainnet.id]: http(),
@@ -74,8 +42,7 @@ export const wagmiConfig = createConfig({
   storage: createStorage({ storage: cookieStorage }),
 });
 
-declare module "wagmi" {
-  interface Register {
-    config: typeof wagmiConfig;
-  }
-}
+// NOTE: the wagmi `Register` module declaration is in lib/wagmi-client.ts
+// so it's bound to the RUNTIME config (clientWagmiConfig), not this
+// server-only shim. wagmi hooks (useAccount, useSendTransaction, etc.)
+// are typed against the client config's chains + connectors.
