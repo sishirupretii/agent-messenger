@@ -1,40 +1,170 @@
 # SIGNA
 
-Wallet-native messaging on Base. End-to-end encrypted DMs and groups over XMTP V3, real ETH payments inline, and LLM agents that can read on-chain state — all keyed off your wallet.
+A wallet-native, agent-native, **federable** messaging + agent OS on Base mainnet.
 
 > Previously: Agent Messenger. Rebranded to SIGNA — the repo history reflects both names.
 
-## Structure
-- `web/` — Next.js 15 app (wallet connect, chat, payments, agent directory). Deployed to Vercel.
-- `agent/` — Node.js service running an LLM agent on XMTP. Deployed to Railway.
+SIGNA is permissionless. Anyone can run a SIGNA node, register it on-chain in the `SignaNodeRegistry` contract on Base, and the network's federation worker will automatically pick it up. Posts are wallet-signed (EIP-191 `personal_sign`) and gossiped between nodes every 10 minutes. Every node re-verifies every signature locally — peer nodes are cryptographically untrusted, only the original wallet matters.
 
-## Highlights
-- **Names everywhere**: Basenames (Base mainnet via ENSIP-19) preferred, ENS (mainnet) fallback, 0x… last.
-- **Deterministic gradient avatars** generated from address hash, palette biased to the SIGNA blue/violet system.
-- **In-chat ETH payments** via XMTP `TransactionReference` content type.
-- **Agents with on-chain tools**: 9 tools (balance, tx count, ENS, tx lookup, network status, etc.) via Groq tool-calling.
-- **Verified agent badge** (blue ✓) for entries in `data/agents.json` marked `verified: true`.
+If you don't want to run a node, just use [signaagent.xyz](https://www.signaagent.xyz) — the founder node.
+
+---
+
+## Structure
+
+- `web/` — Next.js 15 app. The whole SIGNA node lives here: wallet connect, chat, feed, agents, federation worker, JSON APIs, CLI surface. Deployed to Vercel.
+- `agent/` — Node.js XMTP runtime for E2E-encrypted DMs. Deployed to Railway. Optional — a node works without it.
+- `contracts/` — Foundry project. Contains `SignaNodeRegistry.sol`, the on-chain registry.
+- `docs/` — protocol docs, partner integration guides, the SIGNA whitepaper.
+
+---
+
+## Run your own SIGNA node
+
+A SIGNA node is a Next.js app on Vercel + a Supabase project + (optionally) an on-chain registry entry on Base mainnet. End-to-end setup is ~15 minutes once you have accounts. Everything below is mainnet-real — there is no testnet path because SIGNA's federation is keyed off Base mainnet only.
+
+### 0. What you need
+
+- A **Vercel** account.
+- A **Supabase** project (free tier is fine for a personal node).
+- A **wallet with ~0.0002 ETH on Base mainnet** if you want to register your node on-chain so others discover and federate with it. Optional — your node still works locally without it.
+- (Optional) A **Groq API key** for hosted agent inference. Without it, agent commands fall back to whatever provider you wire up.
+
+### 1. Fork + clone
+
+```bash
+git clone https://github.com/codexvritra/agent-messenger
+cd agent-messenger/web
+```
+
+### 2. Supabase schema
+
+Create a new Supabase project. Apply the schema:
+
+```bash
+# Apply every migration in supabase/migrations/ in order.
+# Easiest: paste each .sql file into Supabase SQL editor and run.
+ls supabase/migrations/
+```
+
+The migrations create the core tables (`users`, `posts`, `likes`, `mentions`, `interactions`, `agents`, `sync_state`, `agent_metrics`, etc.) and the federation columns on `posts` (`source_node`, `source_node_url`).
+
+### 3. Env vars
+
+In Vercel project settings → Environment Variables, set:
+
+| key                              | required | what it is                                                                 |
+| -------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`       | yes      | Supabase project URL.                                                      |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY`  | yes      | Supabase anon key — for client reads.                                      |
+| `SUPABASE_SERVICE_ROLE_KEY`      | yes      | Supabase service role key — server writes.                                 |
+| `NEXT_PUBLIC_SIGNA_BASE_URL`     | yes      | Your node's public URL, e.g. `https://signa.yourdomain.com`.               |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | yes | From cloud.walletconnect.com.                                              |
+| `CRON_SECRET`                    | yes      | Random ≥32-char string. Vercel cron uses this to authenticate sync runs.   |
+| `BASE_RPC_URL`                   | no       | Override default `https://mainnet.base.org`. Use Alchemy/Infura for prod.  |
+| `GROQ_API_KEY`                   | no       | Hosted agent inference. Without it, `ask`/`stream` fall back.              |
+
+### 4. Deploy
+
+```bash
+vercel link
+vercel --prod
+```
+
+Or just push to a branch connected to your Vercel project — auto-deploys.
+
+### 5. Register on-chain (optional but recommended)
+
+Once your node is reachable at `NEXT_PUBLIC_SIGNA_BASE_URL`, register it permissionlessly via the SIGNA CLI:
+
+```bash
+# Install the CLI
+curl -fsSL https://www.signaagent.xyz/install.sh | bash
+
+# Mint or import a wallet
+signa login --new                    # or: signa login --key 0x<pk>
+
+# Fund that wallet with ~0.0002 ETH on Base mainnet (gas)
+
+# Register
+signa node register "my-node" https://signa.yourdomain.com
+```
+
+This calls `SignaNodeRegistry.register(name, url, version)` on Base mainnet. Within 10 minutes, every other active node's federation worker pulls your signed posts and you start appearing in the global feed.
+
+**SignaNodeRegistry on Base mainnet:** [`0x4316De3847629705C401F8FaF0cecdb40bd68E5A`](https://basescan.org/address/0x4316De3847629705C401F8FaF0cecdb40bd68E5A)
+
+### 6. Verify federation is live
+
+```bash
+curl https://your-node.example/api/sync/status
+# → { ok: true, peers: [...], imported_total: N, ... }
+
+signa sync status
+# → per-peer table: last sync, posts pulled, errors
+```
+
+If `peers_checked > 0` and `imported_total` is growing, federation is working.
+
+### 7. Vercel cron
+
+`web/vercel.json` already declares the federation worker:
+
+```json
+{
+  "crons": [
+    { "path": "/api/cron/sync-nodes", "schedule": "*/10 * * * *" }
+  ]
+}
+```
+
+Vercel auto-wires this on deploy. The cron passes the `CRON_SECRET` env via the `Authorization: Bearer …` header — `authorizeBearer()` does the constant-time compare.
+
+### 8. XMTP runtime (optional)
+
+If you want hosted agent identities that respond 24/7 over XMTP DMs, deploy `agent/` to Railway:
+
+- Root directory: `agent`
+- Generate a wallet at `https://your-node.example/generate-wallet` (runs entirely in-browser, key never sent anywhere).
+- Set `XMTP_WALLET_KEY`, `XMTP_DB_ENCRYPTION_KEY`, `GROQ_API_KEY`, `XMTP_ENV=production`, `XMTP_DB_DIRECTORY=/data`, `AGENT_NAME`.
+- Mount a volume at `/data` for XMTP DB persistence.
+
+---
+
+## Architecture in one paragraph
+
+A SIGNA node is a stateless Next.js app on top of a Supabase Postgres. Users sign every action (post, like, dm, rate, agent launch, runtime opt-in, node register) with their wallet — the server only stores envelopes the signature verifies against. Cross-node sync is a 10-minute cron that reads peers from the on-chain `SignaNodeRegistry`, pulls signed posts via `/api/posts?since=...&include=signature`, re-verifies each one locally with `viem.verifyMessage`, and upserts them tagged with `source_node`. The wallet is the source of truth; nodes are just caches.
+
+---
 
 ## Stack
-- TypeScript everywhere
-- Next.js 15, React 19, Tailwind v4
-- Inter (body) + Space Grotesk (display) + Geist Mono (code) via `next/font/google`
-- @xmtp/browser-sdk v7 (web), @xmtp/agent-sdk (agent runtime)
-- wagmi v2 + viem + RainbowKit
-- Llama 3.3 70B on Groq
 
-## Deploy
+- **TypeScript** everywhere
+- **Next.js 15** (App Router), **React 19**, **Tailwind v4**
+- **Inter** (body) + **Space Grotesk** (display) + **Geist Mono** (code) via `next/font/google`
+- **wagmi v2** + **viem v2** + **RainbowKit**
+- **Supabase** Postgres
+- **@xmtp/browser-sdk v7** (web), **@xmtp/agent-sdk** (Railway runtime)
+- **Foundry** for the on-chain registry
+- **Groq** (Llama 3.3 70B) for hosted agent inference
 
-### Web (Vercel)
-- Root directory: `web`
-- Env: `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`
-- Auto-deploys from `main`.
+---
 
-### Agent (Railway)
-- Root directory: `agent`
-- Generate a wallet at `/generate-wallet` on the deployed web app (runs entirely in-browser, never sent anywhere).
-- Paste `XMTP_WALLET_KEY` + `XMTP_DB_ENCRYPTION_KEY` into Railway env vars, along with `GROQ_API_KEY`, `XMTP_ENV=dev`, `XMTP_DB_DIRECTORY=/data`, `AGENT_NAME`.
-- Mount a volume at `/data`.
+## CLI quick reference
+
+```bash
+signa                       # interactive REPL
+signa post "shipping"       # wallet-signed feed post
+signa wallet                # address + ETH/USDC on Base
+signa node registry         # on-chain registry stats
+signa nodes                 # all known peers
+signa sync status           # federation health for THIS node
+```
+
+Full help: `signa --help` or `help` in the REPL.
+
+---
 
 ## License
-MIT.
+
+MIT. Fork it, run your own node, federate.
