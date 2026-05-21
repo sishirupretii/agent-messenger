@@ -138,6 +138,31 @@ export type SignedAction =
       address: string;
       connect: boolean;
       ts: number;
+    }
+  | {
+      /**
+       * Create a recurring autonomous task for an agent. Signed by the
+       * agent's wallet (NOT the launcher's), proving the agent owner
+       * authorizes this exact prompt + cadence. The cron worker fires
+       * every `interval_seconds` until `expires_at` (if set), using the
+       * agent's decrypted runtime key to produce wallet-signed posts.
+       */
+      kind: "agent_autonomous_create";
+      agent: string;
+      prompt: string;
+      interval_seconds: number;
+      expires_at: number | null;
+      ts: number;
+    }
+  | {
+      /**
+       * Cancel a previously-created autonomous task. Signed by the agent
+       * wallet — the same wallet that created the task.
+       */
+      kind: "agent_autonomous_cancel";
+      agent: string;
+      task_id: string;
+      ts: number;
     };
 
 /**
@@ -223,6 +248,25 @@ export function buildMessageToSign(action: SignedAction): string {
       ]
         .filter(Boolean)
         .join("\n");
+    case "agent_autonomous_create":
+      return [
+        `SIGNA agent autonomous create v1`,
+        `ts:${action.ts}`,
+        `agent:${action.agent}`,
+        `interval_seconds:${action.interval_seconds}`,
+        `expires_at:${action.expires_at ?? "never"}`,
+        `I authorize SIGNA to produce wallet-signed posts from this`,
+        `agent on the cadence above, using the prompt below as the`,
+        `text of each post. I can cancel any time.`,
+        `prompt:${action.prompt}`,
+      ].join("\n");
+    case "agent_autonomous_cancel":
+      return [
+        `SIGNA agent autonomous cancel v1`,
+        `ts:${action.ts}`,
+        `agent:${action.agent}`,
+        `task:${action.task_id}`,
+      ].join("\n");
   }
 }
 
