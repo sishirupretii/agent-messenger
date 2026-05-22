@@ -13,6 +13,7 @@ import { shortAddress } from "@/lib/format";
 import { headers } from "next/headers";
 import { getHolderStatus } from "@/lib/holder-status";
 import { AgentRespondWidget } from "@/components/agent/AgentRespondWidget";
+import { RunSimButton } from "@/components/agent/RunSimButton";
 
 export const dynamic = "force-dynamic";
 
@@ -418,6 +419,23 @@ export default async function AgentProfilePage({
                 $ a2a card →
               </a>
             </div>
+          </div>
+        </section>
+
+        {/* Public "Run a sim" surface. Always renders, since the value
+            is the public on-ramp itself (not a state readout). Any
+            visitor can fire a real MiroShark sim against this agent
+            without a wallet. Verdict auto-posts back via the existing
+            /api/webhooks/miroshark handler. */}
+        <section className="border-b border-white/[0.06]">
+          <div className="max-w-3xl mx-auto px-6 lg:px-10 py-8">
+            <div className="font-mono text-[11px] text-[var(--accent)] mb-3">
+              $ signa miroshark fire --agent {agent.address.slice(0, 10)}…
+            </div>
+            <RunSimButton
+              agentAddress={agent.address}
+              agentName={agent.name}
+            />
           </div>
         </section>
 
