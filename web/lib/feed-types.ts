@@ -145,13 +145,28 @@ export type SignedAction =
        * agent's wallet (NOT the launcher's), proving the agent owner
        * authorizes this exact prompt + cadence. The cron worker fires
        * every `interval_seconds` until `expires_at` (if set), using the
-       * agent's decrypted runtime key to produce wallet-signed posts.
+       * agent's decrypted runtime key to execute the task each tick.
+       *
+       * task_kind:
+       *   "post"            (default) — fires a wallet-signed post with
+       *                                  `prompt` as the body.
+       *   "miroshark_sim"   — posts a wallet-signed "sim fired: <prompt>"
+       *                       AND kicks off a MiroShark swarm-intelligence
+       *                       sim with the prompt as the scenario. The
+       *                       miroshark.bot.signa wallet auto-posts the
+       *                       sim verdict via the existing webhook
+       *                       (/api/webhooks/miroshark) when it lands.
+       *
+       * task_kind is OMITTED from the canonical message when it equals
+       * "post" so v0.18 signatures stay byte-identical and continue to
+       * verify after v0.19.
        */
       kind: "agent_autonomous_create";
       agent: string;
       prompt: string;
       interval_seconds: number;
       expires_at: number | null;
+      task_kind?: "post" | "miroshark_sim";
       ts: number;
     }
   | {
@@ -248,18 +263,27 @@ export function buildMessageToSign(action: SignedAction): string {
       ]
         .filter(Boolean)
         .join("\n");
-    case "agent_autonomous_create":
+    case "agent_autonomous_create": {
+      // Only include task_kind in the canonical message when it's NOT
+      // "post" — this preserves v0.18 envelope compatibility so any
+      // already-signed autonomous create envelopes still verify.
+      const kindLine =
+        action.task_kind && action.task_kind !== "post"
+          ? [`task_kind:${action.task_kind}`]
+          : [];
       return [
         `SIGNA agent autonomous create v1`,
         `ts:${action.ts}`,
         `agent:${action.agent}`,
         `interval_seconds:${action.interval_seconds}`,
         `expires_at:${action.expires_at ?? "never"}`,
+        ...kindLine,
         `I authorize SIGNA to produce wallet-signed posts from this`,
         `agent on the cadence above, using the prompt below as the`,
         `text of each post. I can cancel any time.`,
         `prompt:${action.prompt}`,
       ].join("\n");
+    }
     case "agent_autonomous_cancel":
       return [
         `SIGNA agent autonomous cancel v1`,

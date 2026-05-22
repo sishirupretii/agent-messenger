@@ -38,7 +38,7 @@ export async function GET(
   const { data, error } = await supabase
     .from("agent_autonomous_tasks")
     .select(
-      "id, agent_address, launched_by, prompt, interval_seconds, expires_at, created_at, next_run_at, last_run_at, last_post_id, last_error, runs_total, runs_failed, cancelled_at",
+      "id, agent_address, launched_by, prompt, kind, interval_seconds, expires_at, created_at, next_run_at, last_run_at, last_post_id, last_error, runs_total, runs_failed, cancelled_at",
     )
     .eq("agent_address", agent)
     .order("created_at", { ascending: false });
@@ -62,6 +62,7 @@ export async function POST(
     prompt?: string;
     interval_seconds?: number;
     expires_at?: number | null;
+    kind?: string;
     ts?: number;
     signature?: string;
   };
@@ -77,6 +78,14 @@ export async function POST(
     body.expires_at === null || body.expires_at === undefined
       ? null
       : Math.floor(Number(body.expires_at));
+  const rawKind = (body.kind ?? "post").trim();
+  if (rawKind !== "post" && rawKind !== "miroshark_sim") {
+    return NextResponse.json(
+      { error: "invalid_kind_must_be_post_or_miroshark_sim" },
+      { status: 400 },
+    );
+  }
+  const task_kind: "post" | "miroshark_sim" = rawKind;
   const ts = Number(body.ts ?? 0);
   const signature = String(body.signature ?? "");
 
@@ -117,6 +126,7 @@ export async function POST(
     prompt,
     interval_seconds,
     expires_at: expires_at_unix,
+    task_kind,
     ts,
   });
 
@@ -168,6 +178,7 @@ export async function POST(
       agent_address: agent,
       launched_by: agent, // signed by the agent's own wallet
       prompt,
+      kind: task_kind,
       interval_seconds,
       expires_at: expiresAtIso,
       signature,
@@ -175,7 +186,7 @@ export async function POST(
       next_run_at: nextRunAt.toISOString(),
     })
     .select(
-      "id, agent_address, prompt, interval_seconds, expires_at, created_at, next_run_at",
+      "id, agent_address, prompt, kind, interval_seconds, expires_at, created_at, next_run_at",
     )
     .single();
 
