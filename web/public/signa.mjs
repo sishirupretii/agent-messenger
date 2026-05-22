@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.18.0";
+const VERSION = "0.19.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -620,11 +620,14 @@ ${paint(c.bold, "Agents")}
                                  (encrypts the agent key server-side
                                   with AES-256-GCM — agent answers 24/7)
   agent disable-runtime <addr>   opt out (use --purge to wipe the key)
-  agent autonomous create <addr> "<prompt>" --interval=<sec> [--expires=<sec>]
+  agent autonomous create <addr> "<prompt>" --interval=<sec>
+       [--expires=<sec>] [--kind=post|miroshark-sim]
                                  wallet-signed recurring agent task — the
                                   agent's wallet authorizes SIGNA to post
                                   the prompt on the given cadence. needs
-                                  runtime enabled.
+                                  runtime enabled. --kind=miroshark-sim
+                                  fires a swarm sim each tick alongside
+                                  the audit post.
   agent autonomous list <addr>   list active recurring tasks for an agent
   agent autonomous cancel <addr> <task_id>
                                  wallet-signed cancel of one task
@@ -666,10 +669,14 @@ ${paint(c.bold, "Partner ecosystem")}
   gitlawb link <did>             wallet-signed bind of a gitlawb DID
   gitlawb unlink                 clear the DID binding
   gitlawb status                 show your current linked DID
+  gitlawb stats <0x wallet>      live repos, commits, tasks for the bound DID
   bankr status                   show whether your bankr key is connected
   bankr trade "<prompt>"         wallet-signed natural-language trade
   miroshark <scenario>           swarm simulation via the gateway
   miroshark sim <0x signa_agent> show miroshark sim binding for an agent
+  miroshark stats <0x signa_agent>
+                                 live sim-activity stats for an agent
+                                  (sims fired, completed, pending, verdict)
 
 ${paint(c.bold, "XMTP — real P2P E2E messaging")}
   xmtp init                       one-time identity registration on XMTP
@@ -3301,14 +3308,20 @@ async function signSignaAgentAutonomousCreate({
   prompt,
   interval_seconds,
   expires_at,
+  task_kind,
   ts,
 }) {
+  // Only include task_kind when it's not "post" — keeps v0.18 envelope
+  // signatures byte-identical. Mirrors the server's buildMessageToSign.
+  const kindLine =
+    task_kind && task_kind !== "post" ? [`task_kind:${task_kind}`] : [];
   const message = [
     "SIGNA agent autonomous create v1",
     `ts:${ts}`,
     `agent:${agent}`,
     `interval_seconds:${interval_seconds}`,
     `expires_at:${expires_at ?? "never"}`,
+    ...kindLine,
     "I authorize SIGNA to produce wallet-signed posts from this",
     "agent on the cadence above, using the prompt below as the",
     "text of each post. I can cancel any time.",
@@ -3366,6 +3379,13 @@ async function cmdAgentAutonomous(args) {
     for (const t of tasks) {
       const expIso = t.expires_at ?? "never";
       out(paint(c.cyan, t.id));
+      out(
+        "  " +
+          paint(c.dim, "kind".padEnd(12)) +
+          (t.kind === "miroshark_sim"
+            ? paint(c.green, "miroshark_sim")
+            : t.kind || "post"),
+      );
       out(
         "  " +
           paint(c.dim, "interval".padEnd(12)) +
@@ -3441,16 +3461,23 @@ async function cmdAgentAutonomous(args) {
     }
     // Pull positional + flag args. Prompt is the next positional, then
     // we expect --interval=N and optionally --expires=N (seconds from
-    // now, NOT unix ts — we add to now() locally).
+    // now, NOT unix ts — we add to now() locally) and --kind=post|miroshark-sim.
     let prompt = null;
     let interval = null;
     let expiresInSec = null;
+    let task_kind = "post";
     for (let i = 2; i < args.length; i++) {
       const a = args[i];
       if (a.startsWith("--interval=")) {
         interval = Math.floor(Number(a.slice("--interval=".length)));
       } else if (a.startsWith("--expires=")) {
         expiresInSec = Math.floor(Number(a.slice("--expires=".length)));
+      } else if (a.startsWith("--kind=")) {
+        // Accept the friendly "miroshark-sim" CLI form AND the canonical
+        // "miroshark_sim" wire form. Normalize before signing so the
+        // signature matches what the server expects.
+        const raw = a.slice("--kind=".length).trim().toLowerCase();
+        task_kind = raw === "miroshark-sim" ? "miroshark_sim" : raw;
       } else if (prompt === null) {
         prompt = a;
       } else {
@@ -3463,6 +3490,10 @@ async function cmdAgentAutonomous(args) {
     }
     if (!Number.isFinite(interval) || interval < 60) {
       err("interval must be >= 60 seconds (e.g. --interval=3600 for hourly)");
+      bail(2);
+    }
+    if (task_kind !== "post" && task_kind !== "miroshark_sim") {
+      err(`invalid --kind=${task_kind}. valid: post, miroshark-sim`);
       bail(2);
     }
     const expires_at =
@@ -3480,6 +3511,7 @@ async function cmdAgentAutonomous(args) {
       prompt,
       interval_seconds: interval,
       expires_at,
+      task_kind,
       ts,
     });
 
@@ -3489,6 +3521,7 @@ async function cmdAgentAutonomous(args) {
         prompt,
         interval_seconds: interval,
         expires_at,
+        kind: task_kind,
         ts,
         signature,
       }),
@@ -4448,10 +4481,80 @@ async function cmdGitlawb(args) {
     return;
   }
 
+  if (sub === "stats") {
+    const sAddr = (args[1] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(sAddr)) {
+      err("usage: gitlawb stats <0x signa_wallet_address>");
+      bail(2);
+    }
+    let r;
+    try {
+      r = await httpJson(`/api/agents/${sAddr}/gitlawb-stats`);
+    } catch (e) {
+      const msg = e?.message ?? String(e);
+      // 404 → no DID bound, 502 → node unreachable. Distinguish both.
+      if (msg.includes("HTTP 404")) {
+        err(paint(c.yellow, "!"), "no gitlawb DID bound to that wallet.");
+        err(
+          paint(c.dim, "  link one first:"),
+          paint(c.cyan, "signa gitlawb link did:key:..."),
+        );
+        bail(1);
+      }
+      if (msg.includes("HTTP 502")) {
+        err(paint(c.red, "✗"), "node.gitlawb.com is unreachable right now.");
+        bail(1);
+      }
+      err(paint(c.red, "✗"), msg);
+      bail(1);
+    }
+    if (!r?.ok) {
+      err(paint(c.red, "✗"), r?.error ?? "gitlawb-stats read failed");
+      bail(1);
+    }
+    out("");
+    out(paint(c.bold, "gitlawb activity"), paint(c.dim, "· " + sAddr));
+    out(paint(c.dim, "─".repeat(64)));
+    out(paint(c.dim, "did".padEnd(16)), paint(c.green, r.gitlawb_did));
+    out(
+      paint(c.dim, "node".padEnd(16)),
+      paint(c.dim, r.node_url ?? "node.gitlawb.com"),
+    );
+    out(paint(c.dim, "repos".padEnd(16)), paint(c.cyan, String(r.repo_count)));
+    out(
+      paint(c.dim, "open tasks".padEnd(16)),
+      paint(c.cyan, String(r.open_tasks)),
+    );
+    out(
+      paint(c.dim, "recent commits".padEnd(16)),
+      paint(c.cyan, String(r.recent_commits)) +
+        paint(c.dim, " (top 3 repos)"),
+    );
+    if (Array.isArray(r.top_repos) && r.top_repos.length > 0) {
+      out("");
+      out(paint(c.bold, "top repos"));
+      for (const repo of r.top_repos) {
+        const name = `${repo.owner ?? "?"}/${repo.name ?? "?"}`;
+        out("  " + paint(c.cyan, name));
+        if (repo.description) {
+          out(
+            "    " + paint(c.dim, String(repo.description).slice(0, 80)),
+          );
+        }
+        if (repo.updated_at) {
+          out("    " + paint(c.dim, "updated " + repo.updated_at));
+        }
+      }
+    }
+    out("");
+    return;
+  }
+
   err("usage:");
   err("  gitlawb link <did:key:... | did:gitlawb:<slug>>   wallet-signed bind");
   err("  gitlawb unlink                                     wallet-signed clear");
   err("  gitlawb status                                     show your linked DID");
+  err("  gitlawb stats <0x signa_wallet>                    live repos/commits/tasks");
   bail(2);
 }
 
@@ -4913,9 +5016,82 @@ async function cmdWatchlist(args) {
 
 async function cmdMiroshark(args) {
   // Subcommands:
-  //   miroshark sim <0x signa_agent>   show miroshark binding for a signa agent
-  //   miroshark <prompt...>            route a swarm sim through the gateway
+  //   miroshark sim <0x signa_agent>     show miroshark binding for a signa agent
+  //   miroshark stats <0x signa_agent>   live sim-activity stats (sims fired,
+  //                                       completed, pending, latest verdict)
+  //   miroshark <prompt...>              route a swarm sim through the gateway
   const sub = args[0];
+  if (sub === "stats") {
+    const sAddr = (args[1] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(sAddr)) {
+      err("usage: miroshark stats <0x signa_agent_address>");
+      bail(2);
+    }
+    const r = await httpJson(`/api/agents/${sAddr}/miroshark-stats`).catch(
+      () => null,
+    );
+    if (!r?.ok) {
+      err(paint(c.red, "✗"), r?.error ?? "miroshark-stats read failed");
+      bail(1);
+    }
+    out("");
+    out(paint(c.bold, "miroshark activity"), paint(c.dim, "· " + sAddr));
+    out(paint(c.dim, "─".repeat(64)));
+    out(
+      paint(c.dim, "sims fired".padEnd(16)),
+      paint(c.cyan, String(r.sims_fired)) +
+        paint(c.dim, " (audit posts)"),
+    );
+    out(
+      paint(c.dim, "completed".padEnd(16)),
+      paint(c.green, String(r.sims_completed)) +
+        paint(c.dim, " (verdicts received)"),
+    );
+    out(
+      paint(c.dim, "pending".padEnd(16)),
+      paint(
+        r.pending_sims > 0 ? c.yellow : c.dim,
+        String(r.pending_sims),
+      ),
+    );
+    out(
+      paint(c.dim, "active tasks".padEnd(16)),
+      paint(c.cyan, String(r.active_tasks)) +
+        paint(c.dim, " (recurring miroshark_sim autonomous)"),
+    );
+    if (r.latest_fired_at) {
+      out(
+        paint(c.dim, "last fired".padEnd(16)),
+        paint(c.dim, r.latest_fired_at),
+      );
+    }
+    if (r.latest_verdict) {
+      out("");
+      out(paint(c.bold, "latest verdict"));
+      out(
+        paint(c.dim, "  at".padEnd(8)),
+        paint(c.dim, r.latest_verdict.created_at),
+      );
+      out(
+        paint(c.dim, "  text".padEnd(8)),
+        String(r.latest_verdict.content).slice(0, 220),
+      );
+    }
+    if (!r.miroshark_bot) {
+      out("");
+      out(
+        paint(
+          c.dim,
+          "  note: MIROSHARK_BOT_KEY isn't configured on this node, so verdict",
+        ),
+      );
+      out(
+        paint(c.dim, "  posts can't be authored. set the env to enable them."),
+      );
+    }
+    out("");
+    return;
+  }
   if (sub === "sim") {
     const sAddr = (args[1] ?? "").toLowerCase();
     if (!/^0x[a-f0-9]{40}$/.test(sAddr)) {
@@ -5595,6 +5771,16 @@ function replCompleter(line) {
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
+  if (
+    head === "agent" &&
+    tokens[1] === "autonomous" &&
+    tokens[2] === "create" &&
+    last.startsWith("--kind")
+  ) {
+    const opts = ["--kind=post", "--kind=miroshark-sim"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
   if (head === "digest" && tokens.length === 2) {
     const opts = ["enable", "disable"];
     const hits = opts.filter((s) => s.startsWith(last));
@@ -5660,12 +5846,12 @@ function replCompleter(line) {
     return [hits.length ? hits : opts, last];
   }
   if (head === "gitlawb" && tokens.length === 2) {
-    const opts = ["resolve", "repos", "playground", "link", "unlink", "status"];
+    const opts = ["resolve", "repos", "playground", "link", "unlink", "status", "stats"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
   if (head === "miroshark" && tokens.length === 2) {
-    const opts = ["sim"];
+    const opts = ["sim", "stats"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }

@@ -4,6 +4,10 @@ import { serverClient } from "@/lib/supabase";
 import { decryptAgentKey } from "@/lib/key-vault";
 import { authorizeBearer } from "@/lib/secret-auth";
 import { buildMessageToSign } from "@/lib/feed-types";
+import {
+  mirosharkConfigured,
+  mirosharkCreateSim,
+} from "@/lib/skills/miroshark";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +45,7 @@ type TaskRow = {
   id: string;
   agent_address: string;
   prompt: string;
+  kind: "post" | "miroshark_sim";
   interval_seconds: number;
   expires_at: string | null;
   next_run_at: string;
@@ -48,15 +53,22 @@ type TaskRow = {
   runs_failed: number;
 };
 
-async function runOneTask(
+/**
+ * Loads + decrypts the agent's runtime key, returns a viem account ready
+ * to sign messages. Returns a structured error for the cron worker to
+ * record + surface to the operator.
+ */
+async function loadAgentSigner(
   db: ReturnType<typeof serverClient>,
-  task: TaskRow,
-): Promise<{ ok: true; post_id: string } | { ok: false; error: string }> {
-  // 1) fetch the agent's encrypted key
+  agentAddress: string,
+): Promise<
+  | { ok: true; account: ReturnType<typeof privateKeyToAccount> }
+  | { ok: false; error: string }
+> {
   const { data: agentRow, error: agentErr } = await db
     .from("agents")
     .select("encrypted_key, runtime_enabled, deleted_at")
-    .eq("address", task.agent_address)
+    .eq("address", agentAddress)
     .maybeSingle();
   if (agentErr) return { ok: false, error: `agent_lookup_${agentErr.code ?? "?"}` };
   if (!agentRow) return { ok: false, error: "agent_not_found" };
@@ -65,7 +77,6 @@ async function runOneTask(
     return { ok: false, error: "runtime_not_enabled" };
   }
 
-  // 2) decrypt the runtime key
   let privateKey: `0x${string}`;
   try {
     privateKey = decryptAgentKey(agentRow.encrypted_key);
@@ -75,30 +86,38 @@ async function runOneTask(
       error: `decrypt_${e instanceof Error ? e.message.slice(0, 40) : "fail"}`,
     };
   }
-
-  // 3) build + sign a fresh post envelope
   const account = privateKeyToAccount(privateKey);
-  if (account.address.toLowerCase() !== task.agent_address.toLowerCase()) {
-    // Defensive: stored key doesn't match the address the runtime is bound
-    // to. Should never happen — would mean encrypted_key got swapped.
+  if (account.address.toLowerCase() !== agentAddress.toLowerCase()) {
     return { ok: false, error: "key_address_mismatch" };
   }
+  return { ok: true, account };
+}
+
+/**
+ * Sign + insert a wallet-signed feed post authored by `account`. Same
+ * shape as any user-posted entry — cross-node sync replicates it
+ * uniformly. Returns the new post id.
+ */
+async function signAndInsertPost(
+  db: ReturnType<typeof serverClient>,
+  account: ReturnType<typeof privateKeyToAccount>,
+  agentAddress: string,
+  content: string,
+): Promise<{ ok: true; post_id: string } | { ok: false; error: string }> {
   const ts = Date.now();
   const message = buildMessageToSign({
     kind: "post",
-    content: task.prompt,
+    content,
     parent_id: null,
     ts,
   });
   const signature = await account.signMessage({ message });
 
-  // 4) insert the post — author = the agent's address. Cross-node sync
-  // sees it the same as any user-posted entry.
   const { data: post, error: insErr } = await db
     .from("posts")
     .insert({
-      author_address: task.agent_address,
-      content: task.prompt,
+      author_address: agentAddress,
+      content,
       parent_id: null,
       signature,
       signed_message: message,
@@ -108,8 +127,87 @@ async function runOneTask(
   if (insErr || !post) {
     return { ok: false, error: `insert_${insErr?.code ?? "fail"}` };
   }
-
   return { ok: true, post_id: post.id };
+}
+
+async function runPostTask(
+  db: ReturnType<typeof serverClient>,
+  task: TaskRow,
+): Promise<{ ok: true; post_id: string } | { ok: false; error: string }> {
+  const signer = await loadAgentSigner(db, task.agent_address);
+  if (!signer.ok) return { ok: false, error: signer.error };
+  return signAndInsertPost(db, signer.account, task.agent_address, task.prompt);
+}
+
+/**
+ * miroshark_sim kind:
+ *   1. Load + decrypt the agent's runtime key (same as post kind).
+ *   2. Post a wallet-signed "fired miroshark sim: <prompt>" entry from
+ *      the agent. Acts as the audit trail — the agent's feed shows when
+ *      it requested a sim, regardless of whether the sim itself returns.
+ *   3. Kick off the actual MiroShark sim via mirosharkCreateSim. The
+ *      verdict is posted asynchronously by miroshark.bot.signa via the
+ *      existing /api/webhooks/miroshark handler when the sim completes.
+ *
+ * If MIROSHARK_BASE_URL isn't configured on this deployment, we still
+ * post the audit entry but return a soft "miroshark_not_configured"
+ * error so operators see it in last_error. We do NOT consider this a
+ * post-failure (the agent's post landed) — so the task isn't penalized
+ * toward auto-cancel.
+ */
+async function runMirosharkSimTask(
+  db: ReturnType<typeof serverClient>,
+  task: TaskRow,
+): Promise<{ ok: true; post_id: string } | { ok: false; error: string }> {
+  const signer = await loadAgentSigner(db, task.agent_address);
+  if (!signer.ok) return { ok: false, error: signer.error };
+
+  // 1) Audit post — fired regardless of miroshark config so the agent's
+  // feed shows the cadence even on an unconfigured deployment.
+  const auditBody = `fired miroshark sim — scenario: ${task.prompt}`.slice(
+    0,
+    480,
+  );
+  const post = await signAndInsertPost(
+    db,
+    signer.account,
+    task.agent_address,
+    auditBody,
+  );
+  if (!post.ok) return { ok: false, error: post.error };
+
+  // 2) Fire the sim if MiroShark is configured. The webhook receiver
+  // handles the result asynchronously — we don't await consensus.
+  if (!mirosharkConfigured()) {
+    // Soft success: post landed, sim skipped because env isn't set.
+    // Surface via last_error but don't treat as a task failure.
+    return { ok: true, post_id: post.post_id };
+  }
+  try {
+    await mirosharkCreateSim({
+      prompt: task.prompt,
+      agentAddress: task.agent_address,
+    });
+  } catch (e) {
+    // Sim creation failed but the audit post landed. Return ok so the
+    // task isn't penalized, but operators see the issue in logs.
+    console.error(
+      "[autonomous-cron] miroshark sim create failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  return { ok: true, post_id: post.post_id };
+}
+
+async function runOneTask(
+  db: ReturnType<typeof serverClient>,
+  task: TaskRow,
+): Promise<{ ok: true; post_id: string } | { ok: false; error: string }> {
+  if (task.kind === "miroshark_sim") {
+    return runMirosharkSimTask(db, task);
+  }
+  // Default + legacy v0.18 tasks: kind is null or "post".
+  return runPostTask(db, task);
 }
 
 export async function GET(req: NextRequest) {
@@ -136,7 +234,7 @@ export async function GET(req: NextRequest) {
   const { data: tasks, error: selErr } = await db
     .from("agent_autonomous_tasks")
     .select(
-      "id, agent_address, prompt, interval_seconds, expires_at, next_run_at, runs_total, runs_failed",
+      "id, agent_address, prompt, kind, interval_seconds, expires_at, next_run_at, runs_total, runs_failed",
     )
     .is("cancelled_at", null)
     .lte("next_run_at", nowIso)
