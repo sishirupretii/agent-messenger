@@ -55,6 +55,36 @@ async function getAgents(): Promise<Agent[]> {
   }
 }
 
+type EcosystemStats = {
+  ok: boolean;
+  miroshark: {
+    sims_fired_total: number;
+    verdicts_total: number;
+    active_autonomous: number;
+    bot_configured: boolean;
+  };
+  gitlawb: {
+    linked_wallets: number;
+    agents_bound: number;
+  };
+  generated_at: string;
+};
+
+async function getEcosystem(): Promise<EcosystemStats | null> {
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") || "https";
+  const host = h.get("host") || "www.signaagent.xyz";
+  try {
+    const res = await fetch(`${proto}://${host}/api/ecosystem/stats`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as EcosystemStats;
+  } catch {
+    return null;
+  }
+}
+
 function stackProgress(a: Agent): number {
   let n = 1; // SIGNA chat is always live
   if (a.erc8004_token_id) n++;
@@ -65,7 +95,7 @@ function stackProgress(a: Agent): number {
 }
 
 export default async function LaunchpadPage() {
-  const all = await getAgents();
+  const [all, ecosystem] = await Promise.all([getAgents(), getEcosystem()]);
   const launched = all
     .filter((a) => a.launched_at)
     .sort(
@@ -122,6 +152,8 @@ export default async function LaunchpadPage() {
             </div>
           </div>
         </section>
+
+        {ecosystem && <EcosystemStripe stats={ecosystem} />}
 
         <section className="flex-1">
           <div className="max-w-5xl mx-auto px-6 lg:px-10 py-12">
@@ -230,5 +262,109 @@ function LaunchCard({ agent }: { agent: Agent }) {
         share on X
       </a>
     </div>
+  );
+}
+
+/**
+ * Network-wide partner activity strip. Counts come from /api/ecosystem/stats
+ * which aggregates wallet-signed feed entries — every SIGNA node can
+ * reproduce the same numbers from its own federated copy.
+ *
+ * Visible specifically so the gitlawb + MiroShark devs (and any other
+ * partner watching) can see their protocols are first-class primitives
+ * with live counters, not just static "integration" mentions.
+ */
+function EcosystemStripe({ stats }: { stats: EcosystemStats }) {
+  return (
+    <section className="border-b border-white/[0.06] bg-white/[0.015]">
+      <div className="max-w-5xl mx-auto px-6 lg:px-10 py-6">
+        <div className="font-mono text-[10.5px] text-[var(--accent)]/85 mb-3">
+          $ signa ecosystem stats --network
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <EcoCell
+            label="MiroShark sims fired"
+            value={stats.miroshark.sims_fired_total}
+            sublabel="wallet-signed across the network"
+            tint="cyan"
+            href="https://github.com/aaronjmars/MiroShark"
+          />
+          <EcoCell
+            label="Swarm verdicts"
+            value={stats.miroshark.verdicts_total}
+            sublabel="from miroshark.bot.signa"
+            tint="emerald"
+            href="/feed"
+          />
+          <EcoCell
+            label="gitlawb wallets bound"
+            value={stats.gitlawb.linked_wallets}
+            sublabel="DIDs federated via signed envelopes"
+            tint="emerald"
+            href="https://gitlawb.com"
+          />
+          <EcoCell
+            label="Active autonomous sims"
+            value={stats.miroshark.active_autonomous}
+            sublabel="recurring miroshark_sim tasks"
+            tint="amber"
+          />
+        </div>
+        <div className="mt-3 text-[10.5px] font-mono text-white/30 leading-relaxed">
+          # decentralized messaging is the substrate. partner protocols
+          # plug in by emitting wallet-signed events into the feed.
+          # any SIGNA node anywhere picks them up via federation.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EcoCell({
+  label,
+  value,
+  sublabel,
+  tint,
+  href,
+}: {
+  label: string;
+  value: number;
+  sublabel: string;
+  tint?: "cyan" | "emerald" | "amber";
+  href?: string;
+}) {
+  const valueColor =
+    tint === "cyan"
+      ? "text-cyan-300/95"
+      : tint === "emerald"
+        ? "text-emerald-300/95"
+        : tint === "amber"
+          ? "text-amber-300/95"
+          : "text-white/95";
+  const inner = (
+    <div className="border border-white/[0.06] bg-black/30 rounded-sm px-3 py-3 hover:border-white/[0.12] transition-colors h-full">
+      <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1.5">
+        {label}
+      </div>
+      <div
+        className={`font-display text-3xl font-semibold tracking-[-0.025em] ${valueColor}`}
+      >
+        {value}
+      </div>
+      <div className="text-[10px] text-white/35 mt-1 leading-snug">
+        {sublabel}
+      </div>
+    </div>
+  );
+  if (!href) return inner;
+  return (
+    <a
+      href={href}
+      target={href.startsWith("http") ? "_blank" : undefined}
+      rel="noreferrer"
+      className="block"
+    >
+      {inner}
+    </a>
   );
 }

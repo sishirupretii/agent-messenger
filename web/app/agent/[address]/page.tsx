@@ -52,6 +52,54 @@ async function getAgent(address: string): Promise<Agent | null> {
   }
 }
 
+type MirosharkStats = {
+  ok: boolean;
+  sims_fired: number;
+  sims_completed: number;
+  pending_sims: number;
+  active_tasks: number;
+  latest_verdict: { post_id: string; content: string; created_at: string } | null;
+  latest_fired_at: string | null;
+};
+
+type GitlawbStats = {
+  ok: boolean;
+  gitlawb_did: string;
+  repo_count: number;
+  open_tasks: number;
+  recent_commits: number;
+  top_repos: Array<{
+    owner: string | null;
+    name: string | null;
+    description: string | null;
+    updated_at: string | null;
+  }>;
+};
+
+async function getPartnerStats(address: string): Promise<{
+  miroshark: MirosharkStats | null;
+  gitlawb: GitlawbStats | null;
+}> {
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") || "https";
+  const host = h.get("host") || "www.signaagent.xyz";
+  const [m, g] = await Promise.all([
+    fetch(`${proto}://${host}/api/agents/${address}/miroshark-stats`, {
+      cache: "no-store",
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<MirosharkStats>) : null))
+      .catch(() => null),
+    fetch(`${proto}://${host}/api/agents/${address}/gitlawb-stats`, {
+      cache: "no-store",
+    })
+      // 404 (no DID bound) is the common case — we just render the
+      // "not yet bound" placeholder, not an error.
+      .then((r) => (r.ok ? (r.json() as Promise<GitlawbStats>) : null))
+      .catch(() => null),
+  ]);
+  return { miroshark: m, gitlawb: g };
+}
+
 /** Compose a viral share-tweet URL pre-filled for this agent. */
 function shareTweetUrl(agent: Agent): string {
   const url = `https://www.signaagent.xyz/agent/${agent.address}`;
@@ -85,6 +133,12 @@ export default async function AgentProfilePage({
   } catch {
     // best-effort; chip just doesn't render on RPC failure
   }
+
+  // Live partner activity — read in parallel with the agent. Both endpoints
+  // are no-store, so the agent profile reflects the network state at request
+  // time. miroshark counts come from wallet-signed feed posts; gitlawb is
+  // pulled live from node.gitlawb.com against the agent's bound DID.
+  const partner = await getPartnerStats(agent.address);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -229,18 +283,30 @@ export default async function AgentProfilePage({
                 />
                 <StackLine
                   slot="code"
-                  status={agent.gitlawb_did ? "live" : "pending"}
+                  status={
+                    partner.gitlawb && partner.gitlawb.ok ? "live" : "pending"
+                  }
                   value={
-                    agent.gitlawb_did
-                      ? `${agent.gitlawb_did.slice(0, 28)}…`
-                      : "push prompt → @gitlawb (decentralized git)"
+                    partner.gitlawb && partner.gitlawb.ok
+                      ? `${partner.gitlawb.repo_count} repo${partner.gitlawb.repo_count === 1 ? "" : "s"} · ${partner.gitlawb.open_tasks} open task${partner.gitlawb.open_tasks === 1 ? "" : "s"} · ${partner.gitlawb.recent_commits} recent commit${partner.gitlawb.recent_commits === 1 ? "" : "s"} via @gitlawb`
+                      : agent.gitlawb_did
+                        ? `${agent.gitlawb_did.slice(0, 28)}… (gitlawb node offline)`
+                        : "push prompt → @gitlawb (decentralized git)"
                   }
                   href={
-                    agent.gitlawb_did
-                      ? `https://gitlawb.com/agents/${encodeURIComponent(agent.gitlawb_did)}`
-                      : "https://gitlawb.com/start"
+                    partner.gitlawb && partner.gitlawb.ok
+                      ? `https://gitlawb.com/agents/${encodeURIComponent(partner.gitlawb.gitlawb_did)}`
+                      : agent.gitlawb_did
+                        ? `https://gitlawb.com/agents/${encodeURIComponent(agent.gitlawb_did)}`
+                        : "https://gitlawb.com/start"
                   }
-                  cta={agent.gitlawb_did ? "view ↗" : "set up ↗"}
+                  cta={
+                    partner.gitlawb && partner.gitlawb.ok
+                      ? "view ↗"
+                      : agent.gitlawb_did
+                        ? "view ↗"
+                        : "set up ↗"
+                  }
                 />
                 <StackLine
                   slot="id"
@@ -259,18 +325,33 @@ export default async function AgentProfilePage({
                 />
                 <StackLine
                   slot="sim"
-                  status={agent.miroshark_sim_id ? "live" : "pending"}
-                  value={
+                  status={
+                    (partner.miroshark?.sims_fired ?? 0) > 0 ||
                     agent.miroshark_sim_id
-                      ? `MiroShark sim #${agent.miroshark_sim_id}`
-                      : "demand pre-test via @miroshark_ (optional)"
+                      ? "live"
+                      : "pending"
+                  }
+                  value={
+                    (partner.miroshark?.sims_fired ?? 0) > 0
+                      ? `${partner.miroshark!.sims_fired} sim${partner.miroshark!.sims_fired === 1 ? "" : "s"} fired · ${partner.miroshark!.sims_completed} verdict${partner.miroshark!.sims_completed === 1 ? "" : "s"} · ${partner.miroshark!.active_tasks} active autonomous · @miroshark_`
+                      : agent.miroshark_sim_id
+                        ? `MiroShark sim #${agent.miroshark_sim_id}`
+                        : "demand pre-test via @miroshark_ (optional)"
                   }
                   href={
-                    agent.miroshark_sim_id
-                      ? `https://github.com/aaronjmars/MiroShark`
-                      : "https://github.com/aaronjmars/MiroShark"
+                    (partner.miroshark?.sims_fired ?? 0) > 0
+                      ? `/feed/${agent.address}`
+                      : agent.miroshark_sim_id
+                        ? `https://github.com/aaronjmars/MiroShark`
+                        : "https://github.com/aaronjmars/MiroShark"
                   }
-                  cta={agent.miroshark_sim_id ? "view ↗" : "run ↗"}
+                  cta={
+                    (partner.miroshark?.sims_fired ?? 0) > 0
+                      ? "feed ↗"
+                      : agent.miroshark_sim_id
+                        ? "view ↗"
+                        : "run ↗"
+                  }
                 />
               </div>
             </div>
@@ -339,6 +420,16 @@ export default async function AgentProfilePage({
             </div>
           </div>
         </section>
+
+        {/* Ecosystem activity — LIVE partner data for this agent.
+            Only renders if there's something to show. The whole panel
+            disappears for an agent that hasn't touched MiroShark or
+            gitlawb so it doesn't add noise to brand-new agents. */}
+        <EcosystemActivityPanel
+          agentAddress={agent.address}
+          miroshark={partner.miroshark}
+          gitlawb={partner.gitlawb}
+        />
 
         {/* ERC-8004 / AEON — trustless agent identity */}
         <section className="border-b border-white/[0.06]">
@@ -477,6 +568,190 @@ function StackLine({
       >
         {cta}
       </a>
+    </div>
+  );
+}
+
+/**
+ * Renders a live "ecosystem activity" section for an agent — surfaces
+ * MiroShark + gitlawb activity pulled from the v0.19 stats endpoints.
+ * Hidden entirely if neither partner has anything to show, so blank
+ * new agents don't get a noisy empty panel.
+ */
+function EcosystemActivityPanel({
+  agentAddress,
+  miroshark,
+  gitlawb,
+}: {
+  agentAddress: string;
+  miroshark: MirosharkStats | null;
+  gitlawb: GitlawbStats | null;
+}) {
+  const hasMiroshark = !!miroshark && miroshark.sims_fired > 0;
+  const hasGitlawb = !!gitlawb && gitlawb.ok;
+  if (!hasMiroshark && !hasGitlawb) return null;
+
+  return (
+    <section className="border-b border-white/[0.06]">
+      <div className="max-w-3xl mx-auto px-6 lg:px-10 py-10">
+        <div className="font-mono text-[11px] text-[var(--accent)] mb-3">
+          $ signa ecosystem activity --address {agentAddress.slice(0, 10)}…
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          {hasMiroshark && (
+            <div className="border border-white/10 bg-black/30 p-4 rounded-sm">
+              <div className="flex items-baseline justify-between mb-3">
+                <div className="font-mono text-[11px] text-emerald-300/85">
+                  MiroShark
+                </div>
+                <a
+                  href="https://github.com/aaronjmars/MiroShark"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-[var(--accent)] hover:underline underline-offset-4"
+                >
+                  @miroshark_ ↗
+                </a>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <Stat
+                  label="fired"
+                  value={miroshark!.sims_fired}
+                />
+                <Stat
+                  label="verdicts"
+                  value={miroshark!.sims_completed}
+                  tint="emerald"
+                />
+                <Stat
+                  label="pending"
+                  value={miroshark!.pending_sims}
+                  tint={miroshark!.pending_sims > 0 ? "yellow" : "dim"}
+                />
+              </div>
+              <div className="text-[11px] text-white/55 font-mono mb-2">
+                <span className="text-white/35">active autonomous: </span>
+                <span className="text-white/85">
+                  {miroshark!.active_tasks}
+                </span>
+              </div>
+              {miroshark!.latest_verdict ? (
+                <div className="mt-3 pt-3 border-t border-white/[0.06]">
+                  <div className="text-[10px] uppercase tracking-wider text-white/35 mb-1">
+                    Latest verdict
+                  </div>
+                  <div className="text-[12px] text-white/80 leading-relaxed">
+                    {miroshark!.latest_verdict.content.slice(0, 220)}
+                  </div>
+                  <div className="text-[10px] text-white/35 font-mono mt-1">
+                    {new Date(
+                      miroshark!.latest_verdict.created_at,
+                    ).toISOString().slice(0, 16).replace("T", " ")}{" "}
+                    UTC
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 pt-3 border-t border-white/[0.06] text-[11px] text-white/45">
+                  awaiting first swarm verdict…
+                </div>
+              )}
+            </div>
+          )}
+
+          {hasGitlawb && (
+            <div className="border border-white/10 bg-black/30 p-4 rounded-sm">
+              <div className="flex items-baseline justify-between mb-3">
+                <div className="font-mono text-[11px] text-emerald-300/85">
+                  gitlawb
+                </div>
+                <a
+                  href={`https://gitlawb.com/agents/${encodeURIComponent(gitlawb!.gitlawb_did)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-[var(--accent)] hover:underline underline-offset-4"
+                >
+                  @gitlawb ↗
+                </a>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <Stat label="repos" value={gitlawb!.repo_count} />
+                <Stat
+                  label="open tasks"
+                  value={gitlawb!.open_tasks}
+                  tint={gitlawb!.open_tasks > 0 ? "yellow" : "dim"}
+                />
+                <Stat
+                  label="commits"
+                  value={gitlawb!.recent_commits}
+                  tint="emerald"
+                />
+              </div>
+              <div className="text-[10px] font-mono text-white/35 truncate mb-2">
+                did: {gitlawb!.gitlawb_did}
+              </div>
+              {gitlawb!.top_repos.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/[0.06]">
+                  <div className="text-[10px] uppercase tracking-wider text-white/35 mb-2">
+                    Top repos
+                  </div>
+                  <div className="space-y-1.5">
+                    {gitlawb!.top_repos.slice(0, 3).map((r, i) => (
+                      <div
+                        key={`${r.owner}/${r.name}-${i}`}
+                        className="text-[12px] leading-snug"
+                      >
+                        <span className="font-mono text-white/85">
+                          {r.owner ?? "?"}/{r.name ?? "?"}
+                        </span>
+                        {r.description && (
+                          <div className="text-[11px] text-white/50">
+                            {r.description.slice(0, 64)}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="mt-4 text-[10.5px] font-mono text-white/30">
+          # live data — federated across every SIGNA node via wallet-signed
+          # events. partner protocols plug in by emitting signed posts.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tint,
+}: {
+  label: string;
+  value: number;
+  tint?: "emerald" | "yellow" | "dim";
+}) {
+  const valueColor =
+    tint === "emerald"
+      ? "text-emerald-300/90"
+      : tint === "yellow"
+        ? "text-yellow-300/90"
+        : tint === "dim"
+          ? "text-white/40"
+          : "text-white/95";
+  return (
+    <div>
+      <div
+        className={`font-display text-2xl font-semibold tracking-[-0.02em] ${valueColor}`}
+      >
+        {value}
+      </div>
+      <div className="text-[10px] uppercase tracking-wider text-white/40 mt-0.5">
+        {label}
+      </div>
     </div>
   );
 }
