@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { privateKeyToAccount } from "viem/accounts";
+import {
+  createPublicClient,
+  createWalletClient,
+  encodeFunctionData,
+  formatEther,
+  formatUnits,
+  http,
+  parseAbi,
+  type Address,
+  type Hex,
+} from "viem";
+import { base } from "viem/chains";
 import { serverClient } from "@/lib/supabase";
 import { decryptAgentKey } from "@/lib/key-vault";
 import { authorizeBearer } from "@/lib/secret-auth";
@@ -8,6 +20,14 @@ import {
   mirosharkConfigured,
   mirosharkCreateSim,
 } from "@/lib/skills/miroshark";
+
+const BASE_RPC = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+// Base mainnet USDC — Coinbase's official ERC-20.
+const USDC_BASE: Address = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const ERC20_ABI = parseAbi([
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function balanceOf(address owner) view returns (uint256)",
+]);
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,12 +65,16 @@ type TaskRow = {
   id: string;
   agent_address: string;
   prompt: string;
-  kind: "post" | "miroshark_sim";
+  kind: "post" | "miroshark_sim" | "payment";
   interval_seconds: number;
   expires_at: string | null;
   next_run_at: string;
   runs_total: number;
   runs_failed: number;
+  // Payment-only fields (NULL for other kinds)
+  payment_to: string | null;
+  payment_token: "ETH" | "USDC" | null;
+  payment_amount_wei: string | null;
 };
 
 /**
@@ -199,12 +223,176 @@ async function runMirosharkSimTask(
   return { ok: true, post_id: post.post_id };
 }
 
+/**
+ * payment kind:
+ *   1. Load + decrypt the agent's runtime key.
+ *   2. Build + sign + broadcast an EIP-1559 tx on Base mainnet
+ *      sending payment_amount_wei of payment_token to payment_to.
+ *      ETH = native value transfer. USDC = ERC-20 transfer call to
+ *      the Base mainnet USDC contract.
+ *   3. Pre-flight balance check — abort cleanly with insufficient_balance
+ *      if the agent can't cover the spend. The task is not auto-cancelled
+ *      so the operator can refund + retry.
+ *   4. On success, post a wallet-signed audit entry containing the tx
+ *      hash so the agent's feed shows every spend. Cross-node sync
+ *      replicates those receipts across every SIGNA node.
+ *   5. Persist last_tx_hash on the task row for the API + CLI to show.
+ *
+ * The agent's own wallet signs the tx (via privateKeyToAccount) — no
+ * custodian holds the signing key in plaintext beyond the brief decrypt
+ * window inside this serverless invocation.
+ */
+async function runPaymentTask(
+  db: ReturnType<typeof serverClient>,
+  task: TaskRow,
+): Promise<
+  | { ok: true; post_id: string; tx_hash: string }
+  | { ok: false; error: string }
+> {
+  if (
+    !task.payment_to ||
+    !task.payment_token ||
+    !task.payment_amount_wei
+  ) {
+    return { ok: false, error: "payment_fields_missing" };
+  }
+  const amountWei = (() => {
+    try {
+      return BigInt(task.payment_amount_wei);
+    } catch {
+      return null;
+    }
+  })();
+  if (amountWei === null || amountWei <= 0n) {
+    return { ok: false, error: "payment_amount_invalid" };
+  }
+
+  const signer = await loadAgentSigner(db, task.agent_address);
+  if (!signer.ok) return { ok: false, error: signer.error };
+  const account = signer.account;
+  const to = task.payment_to.toLowerCase() as Address;
+
+  const pub = createPublicClient({
+    chain: base,
+    transport: http(BASE_RPC),
+  });
+  const wallet = createWalletClient({
+    account,
+    chain: base,
+    transport: http(BASE_RPC),
+  });
+
+  // Pre-flight balance check. For ETH, native balance must cover
+  // (amount + estimated gas). For USDC, token balance must cover amount;
+  // gas is paid in ETH from the agent's wallet.
+  try {
+    if (task.payment_token === "ETH") {
+      const ethBal = await pub.getBalance({ address: account.address });
+      if (ethBal < amountWei) {
+        return {
+          ok: false,
+          error: `insufficient_eth_balance_${ethBal}_lt_${amountWei}`,
+        };
+      }
+    } else {
+      const [usdcBal, ethBal] = await Promise.all([
+        pub.readContract({
+          address: USDC_BASE,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: [account.address],
+        }) as Promise<bigint>,
+        pub.getBalance({ address: account.address }),
+      ]);
+      if (usdcBal < amountWei) {
+        return {
+          ok: false,
+          error: `insufficient_usdc_balance_${usdcBal}_lt_${amountWei}`,
+        };
+      }
+      // ERC-20 transfer needs gas in ETH — sanity-check a tiny minimum.
+      if (ethBal < 50_000_000_000_000n /* 0.00005 ETH */) {
+        return {
+          ok: false,
+          error: "insufficient_eth_for_gas",
+        };
+      }
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      error: `balance_check_${e instanceof Error ? e.message.slice(0, 60) : "fail"}`,
+    };
+  }
+
+  // Build + broadcast the tx. viem handles EIP-1559 fee selection +
+  // nonce management automatically.
+  let txHash: Hex;
+  try {
+    if (task.payment_token === "ETH") {
+      txHash = await wallet.sendTransaction({
+        to,
+        value: amountWei,
+      });
+    } else {
+      const data = encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: "transfer",
+        args: [to, amountWei],
+      });
+      txHash = await wallet.sendTransaction({
+        to: USDC_BASE,
+        data,
+      });
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      error: `broadcast_${e instanceof Error ? e.message.slice(0, 80) : "fail"}`,
+    };
+  }
+
+  // Audit post — wallet-signed by the agent so the agent's feed has
+  // verifiable on-chain spend history. Cross-node sync replicates it.
+  const human =
+    task.payment_token === "ETH"
+      ? `${formatEther(amountWei)} ETH`
+      : `${formatUnits(amountWei, 6)} USDC`;
+  const memo = task.prompt ? ` — memo: ${task.prompt}` : "";
+  const auditBody =
+    `sent ${human} to ${to} on Base mainnet · ` +
+    `tx ${txHash} · https://basescan.org/tx/${txHash}${memo}`;
+  const audit = await signAndInsertPost(
+    db,
+    account,
+    task.agent_address,
+    auditBody.slice(0, 480),
+  );
+  if (!audit.ok) {
+    // The tx broadcast but the audit insert failed — return the tx hash
+    // anyway so the operator can see it landed. last_tx_hash will still
+    // be set on the task row below.
+    return {
+      ok: false,
+      error: `audit_insert_failed_after_tx_${txHash}`,
+    };
+  }
+
+  return { ok: true, post_id: audit.post_id, tx_hash: txHash };
+}
+
 async function runOneTask(
   db: ReturnType<typeof serverClient>,
   task: TaskRow,
-): Promise<{ ok: true; post_id: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; post_id: string; tx_hash?: string }
+  | { ok: false; error: string }
+> {
   if (task.kind === "miroshark_sim") {
     return runMirosharkSimTask(db, task);
+  }
+  if (task.kind === "payment") {
+    return runPaymentTask(db, task);
   }
   // Default + legacy v0.18 tasks: kind is null or "post".
   return runPostTask(db, task);
@@ -234,7 +422,7 @@ export async function GET(req: NextRequest) {
   const { data: tasks, error: selErr } = await db
     .from("agent_autonomous_tasks")
     .select(
-      "id, agent_address, prompt, kind, interval_seconds, expires_at, next_run_at, runs_total, runs_failed",
+      "id, agent_address, prompt, kind, interval_seconds, expires_at, next_run_at, runs_total, runs_failed, payment_to, payment_token, payment_amount_wei",
     )
     .is("cancelled_at", null)
     .lte("next_run_at", nowIso)
@@ -248,13 +436,17 @@ export async function GET(req: NextRequest) {
   const results: Array<{
     task_id: string;
     agent: string;
+    kind: string;
     ok: boolean;
     post_id?: string;
+    tx_hash?: string;
     error?: string;
   }> = [];
 
   for (const task of (tasks ?? []) as TaskRow[]) {
-    let res: { ok: true; post_id: string } | { ok: false; error: string };
+    let res:
+      | { ok: true; post_id: string; tx_hash?: string }
+      | { ok: false; error: string };
     try {
       res = await runOneTask(db, task);
     } catch (e) {
@@ -272,10 +464,12 @@ export async function GET(req: NextRequest) {
       runs_total: task.runs_total + 1,
       runs_failed: nextRunsFailed,
       last_error: res.ok ? null : res.error.slice(0, 200),
-      last_post_id: res.ok ? res.post_id : task.id ? undefined : undefined,
     };
     if (res.ok) {
       update.last_post_id = res.post_id;
+      if (res.tx_hash) {
+        update.last_tx_hash = res.tx_hash;
+      }
     }
     // Auto-cancel runaway-failing tasks so a broken agent doesn't bleed
     // forever. The agent owner can re-create after they fix the issue.
@@ -288,8 +482,14 @@ export async function GET(req: NextRequest) {
     results.push({
       task_id: task.id,
       agent: task.agent_address,
+      kind: task.kind ?? "post",
       ok: res.ok,
-      ...(res.ok ? { post_id: res.post_id } : { error: res.error }),
+      ...(res.ok
+        ? {
+            post_id: res.post_id,
+            ...(res.tx_hash ? { tx_hash: res.tx_hash } : {}),
+          }
+        : { error: res.error }),
     });
   }
 

@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.21.0";
+const VERSION = "0.22.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -621,13 +621,19 @@ ${paint(c.bold, "Agents")}
                                   with AES-256-GCM — agent answers 24/7)
   agent disable-runtime <addr>   opt out (use --purge to wipe the key)
   agent autonomous create <addr> "<prompt>" --interval=<sec>
-       [--expires=<sec>] [--kind=post|miroshark-sim]
+       [--expires=<sec>] [--kind=post|miroshark-sim|payment]
+       [--to=0x... --token=ETH|USDC --amount=<decimal>]
                                  wallet-signed recurring agent task — the
-                                  agent's wallet authorizes SIGNA to post
-                                  the prompt on the given cadence. needs
-                                  runtime enabled. --kind=miroshark-sim
-                                  fires a swarm sim each tick alongside
-                                  the audit post.
+                                  agent's wallet authorizes SIGNA to act
+                                  on the cadence above. needs runtime
+                                  enabled.
+                                    --kind=post (default): publishes the
+                                      prompt as a wallet-signed feed post.
+                                    --kind=miroshark-sim: fires a swarm
+                                      sim each tick + posts audit entry.
+                                    --kind=payment: broadcasts an EIP-1559
+                                      tx on Base mainnet each tick. caps:
+                                      0.1 ETH or 1000 USDC per tick.
   agent autonomous list <addr>   list active recurring tasks for an agent
   agent autonomous cancel <addr> <task_id>
                                  wallet-signed cancel of one task
@@ -3309,12 +3315,39 @@ async function signSignaAgentAutonomousCreate({
   interval_seconds,
   expires_at,
   task_kind,
+  payment_to,
+  payment_token,
+  payment_amount_wei,
   ts,
 }) {
   // Only include task_kind when it's not "post" — keeps v0.18 envelope
   // signatures byte-identical. Mirrors the server's buildMessageToSign.
   const kindLine =
     task_kind && task_kind !== "post" ? [`task_kind:${task_kind}`] : [];
+  // Payment fields included ONLY when kind=payment (v0.22+).
+  const paymentLines =
+    task_kind === "payment"
+      ? [
+          `payment_to:${payment_to}`,
+          `payment_token:${payment_token}`,
+          `payment_amount_wei:${payment_amount_wei}`,
+        ]
+      : [];
+  const authorizationLines =
+    task_kind === "payment"
+      ? [
+          "I authorize SIGNA to broadcast wallet-signed transactions",
+          "from this agent on the cadence above, sending the exact",
+          "amount and token specified to the exact address specified,",
+          "until expiry or until I cancel.",
+          `memo:${prompt}`,
+        ]
+      : [
+          "I authorize SIGNA to produce wallet-signed posts from this",
+          "agent on the cadence above, using the prompt below as the",
+          "text of each post. I can cancel any time.",
+          `prompt:${prompt}`,
+        ];
   const message = [
     "SIGNA agent autonomous create v1",
     `ts:${ts}`,
@@ -3322,10 +3355,8 @@ async function signSignaAgentAutonomousCreate({
     `interval_seconds:${interval_seconds}`,
     `expires_at:${expires_at ?? "never"}`,
     ...kindLine,
-    "I authorize SIGNA to produce wallet-signed posts from this",
-    "agent on the cadence above, using the prompt below as the",
-    "text of each post. I can cancel any time.",
-    `prompt:${prompt}`,
+    ...paymentLines,
+    ...authorizationLines,
   ].join("\n");
   const signature = await agentAccount.signMessage({ message });
   return { signature, message };
@@ -3384,8 +3415,36 @@ async function cmdAgentAutonomous(args) {
           paint(c.dim, "kind".padEnd(12)) +
           (t.kind === "miroshark_sim"
             ? paint(c.green, "miroshark_sim")
-            : t.kind || "post"),
+            : t.kind === "payment"
+              ? paint(c.yellow, "payment")
+              : t.kind || "post"),
       );
+      if (t.kind === "payment") {
+        const decimals = t.payment_token === "ETH" ? 18 : 6;
+        let human = String(t.payment_amount_wei ?? "?");
+        try {
+          const v4 = await viem();
+          human = v4.formatUnits(BigInt(t.payment_amount_wei), decimals);
+        } catch {
+          // keep the raw fallback
+        }
+        out(
+          "  " +
+            paint(c.dim, "pays".padEnd(12)) +
+            `${human} ${t.payment_token} → ${paint(c.cyan, t.payment_to ?? "?")}`,
+        );
+        if (t.last_tx_hash) {
+          out(
+            "  " +
+              paint(c.dim, "last tx".padEnd(12)) +
+              paint(c.cyan, t.last_tx_hash) +
+              paint(
+                c.dim,
+                "  basescan.org/tx/" + t.last_tx_hash,
+              ),
+          );
+        }
+      }
       out(
         "  " +
           paint(c.dim, "interval".padEnd(12)) +
@@ -3461,11 +3520,17 @@ async function cmdAgentAutonomous(args) {
     }
     // Pull positional + flag args. Prompt is the next positional, then
     // we expect --interval=N and optionally --expires=N (seconds from
-    // now, NOT unix ts — we add to now() locally) and --kind=post|miroshark-sim.
+    // now), --kind=post|miroshark-sim|payment, and payment-only:
+    //   --to=0x...
+    //   --token=ETH|USDC
+    //   --amount=<decimal>  (in human units; we convert to wei/USDC units)
     let prompt = null;
     let interval = null;
     let expiresInSec = null;
     let task_kind = "post";
+    let pay_to = null;
+    let pay_token = null;
+    let pay_amount = null;
     for (let i = 2; i < args.length; i++) {
       const a = args[i];
       if (a.startsWith("--interval=")) {
@@ -3478,6 +3543,12 @@ async function cmdAgentAutonomous(args) {
         // signature matches what the server expects.
         const raw = a.slice("--kind=".length).trim().toLowerCase();
         task_kind = raw === "miroshark-sim" ? "miroshark_sim" : raw;
+      } else if (a.startsWith("--to=")) {
+        pay_to = a.slice("--to=".length).trim().toLowerCase();
+      } else if (a.startsWith("--token=")) {
+        pay_token = a.slice("--token=".length).trim().toUpperCase();
+      } else if (a.startsWith("--amount=")) {
+        pay_amount = a.slice("--amount=".length).trim();
       } else if (prompt === null) {
         prompt = a;
       } else {
@@ -3492,10 +3563,49 @@ async function cmdAgentAutonomous(args) {
       err("interval must be >= 60 seconds (e.g. --interval=3600 for hourly)");
       bail(2);
     }
-    if (task_kind !== "post" && task_kind !== "miroshark_sim") {
-      err(`invalid --kind=${task_kind}. valid: post, miroshark-sim`);
+    if (
+      task_kind !== "post" &&
+      task_kind !== "miroshark_sim" &&
+      task_kind !== "payment"
+    ) {
+      err(`invalid --kind=${task_kind}. valid: post, miroshark-sim, payment`);
       bail(2);
     }
+
+    // Payment kind needs the (to, token, amount) trio. We convert the
+    // human-readable amount to its smallest unit (wei for ETH, microUSDC
+    // for USDC) HERE so the server only ever sees the integer.
+    let payment_to_normalized = null;
+    let payment_token_normalized = null;
+    let payment_amount_wei_str = null;
+    if (task_kind === "payment") {
+      if (!pay_to || !/^0x[a-f0-9]{40}$/.test(pay_to)) {
+        err("--to=0x<address> is required for --kind=payment");
+        bail(2);
+      }
+      if (pay_token !== "ETH" && pay_token !== "USDC") {
+        err("--token=ETH or --token=USDC is required for --kind=payment");
+        bail(2);
+      }
+      const amountNum = Number(pay_amount);
+      if (!Number.isFinite(amountNum) || amountNum <= 0) {
+        err("--amount=<positive decimal> is required for --kind=payment");
+        bail(2);
+      }
+      const decimals = pay_token === "ETH" ? 18 : 6;
+      // BigInt-safe conversion: use string ops so we don't lose precision
+      // on small fractions. We use viem.parseUnits when available below.
+      const v2 = await viem();
+      try {
+        payment_amount_wei_str = v2.parseUnits(String(pay_amount), decimals).toString();
+      } catch {
+        err(`couldn't parse --amount=${pay_amount} as a ${pay_token} value`);
+        bail(2);
+      }
+      payment_to_normalized = pay_to;
+      payment_token_normalized = pay_token;
+    }
+
     const expires_at =
       expiresInSec && Number.isFinite(expiresInSec) && expiresInSec > 0
         ? Math.floor(Date.now() / 1000) + expiresInSec
@@ -3512,6 +3622,9 @@ async function cmdAgentAutonomous(args) {
       interval_seconds: interval,
       expires_at,
       task_kind,
+      payment_to: payment_to_normalized,
+      payment_token: payment_token_normalized,
+      payment_amount_wei: payment_amount_wei_str,
       ts,
     });
 
@@ -3524,6 +3637,13 @@ async function cmdAgentAutonomous(args) {
         kind: task_kind,
         ts,
         signature,
+        ...(task_kind === "payment"
+          ? {
+              payment_to: payment_to_normalized,
+              payment_token: payment_token_normalized,
+              payment_amount_wei: payment_amount_wei_str,
+            }
+          : {}),
       }),
     });
     if (!r.ok || !r.task) {
@@ -3536,6 +3656,14 @@ async function cmdAgentAutonomous(args) {
     out(paint(c.dim, "task_id".padEnd(14)), paint(c.cyan, r.task.id));
     out(paint(c.dim, "agent".padEnd(14)), addr);
     out(
+      paint(c.dim, "kind".padEnd(14)),
+      r.task.kind === "payment"
+        ? paint(c.yellow, "payment")
+        : r.task.kind === "miroshark_sim"
+          ? paint(c.green, "miroshark_sim")
+          : "post",
+    );
+    out(
       paint(c.dim, "interval".padEnd(14)),
       `${r.task.interval_seconds}s`,
     );
@@ -3543,12 +3671,37 @@ async function cmdAgentAutonomous(args) {
       paint(c.dim, "expires_at".padEnd(14)),
       r.task.expires_at ?? paint(c.dim, "never"),
     );
+    if (r.task.kind === "payment") {
+      out(paint(c.dim, "to".padEnd(14)), paint(c.cyan, r.task.payment_to));
+      out(
+        paint(c.dim, "token".padEnd(14)),
+        paint(c.bold, r.task.payment_token),
+      );
+      // Format amount human-style alongside the raw wei
+      const v3 = await viem();
+      const decimals = r.task.payment_token === "ETH" ? 18 : 6;
+      let human = String(r.task.payment_amount_wei);
+      try {
+        human = v3.formatUnits(
+          BigInt(r.task.payment_amount_wei),
+          decimals,
+        );
+      } catch {
+        // keep the raw fallback
+      }
+      out(
+        paint(c.dim, "amount".padEnd(14)),
+        `${human} ${r.task.payment_token}  ${paint(c.dim, "(" + r.task.payment_amount_wei + " raw units)")}`,
+      );
+    }
     out(paint(c.dim, "next_run".padEnd(14)), r.task.next_run_at);
     out("");
     out(
       paint(
         c.dim,
-        "  the SIGNA cron fires every minute. the first post lands at the next_run_at above.",
+        r.task.kind === "payment"
+          ? "  the cron will broadcast an EIP-1559 tx on Base mainnet every tick."
+          : "  the SIGNA cron fires every minute. the first post lands at the next_run_at above.",
       ),
     );
     return;
@@ -5777,7 +5930,17 @@ function replCompleter(line) {
     tokens[2] === "create" &&
     last.startsWith("--kind")
   ) {
-    const opts = ["--kind=post", "--kind=miroshark-sim"];
+    const opts = ["--kind=post", "--kind=miroshark-sim", "--kind=payment"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (
+    head === "agent" &&
+    tokens[1] === "autonomous" &&
+    tokens[2] === "create" &&
+    last.startsWith("--token")
+  ) {
+    const opts = ["--token=ETH", "--token=USDC"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }

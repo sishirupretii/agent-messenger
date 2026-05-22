@@ -38,7 +38,7 @@ export async function GET(
   const { data, error } = await supabase
     .from("agent_autonomous_tasks")
     .select(
-      "id, agent_address, launched_by, prompt, kind, interval_seconds, expires_at, created_at, next_run_at, last_run_at, last_post_id, last_error, runs_total, runs_failed, cancelled_at",
+      "id, agent_address, launched_by, prompt, kind, interval_seconds, expires_at, created_at, next_run_at, last_run_at, last_post_id, last_error, runs_total, runs_failed, cancelled_at, payment_to, payment_token, payment_amount_wei, last_tx_hash",
     )
     .eq("agent_address", agent)
     .order("created_at", { ascending: false });
@@ -63,6 +63,9 @@ export async function POST(
     interval_seconds?: number;
     expires_at?: number | null;
     kind?: string;
+    payment_to?: string;
+    payment_token?: string;
+    payment_amount_wei?: string;
     ts?: number;
     signature?: string;
   };
@@ -79,15 +82,82 @@ export async function POST(
       ? null
       : Math.floor(Number(body.expires_at));
   const rawKind = (body.kind ?? "post").trim();
-  if (rawKind !== "post" && rawKind !== "miroshark_sim") {
+  if (
+    rawKind !== "post" &&
+    rawKind !== "miroshark_sim" &&
+    rawKind !== "payment"
+  ) {
     return NextResponse.json(
-      { error: "invalid_kind_must_be_post_or_miroshark_sim" },
+      { error: "invalid_kind_must_be_post_or_miroshark_sim_or_payment" },
       { status: 400 },
     );
   }
-  const task_kind: "post" | "miroshark_sim" = rawKind;
+  const task_kind: "post" | "miroshark_sim" | "payment" = rawKind;
   const ts = Number(body.ts ?? 0);
   const signature = String(body.signature ?? "");
+
+  // Payment-specific validation. Reject early before we touch the DB.
+  // payment_amount_wei is a string to preserve precision (>2^53).
+  let payment_to: `0x${string}` | null = null;
+  let payment_token: "ETH" | "USDC" | null = null;
+  let payment_amount_wei: bigint | null = null;
+  if (task_kind === "payment") {
+    const to = (body.payment_to ?? "").trim();
+    const token = (body.payment_token ?? "").trim().toUpperCase();
+    const amountRaw = String(body.payment_amount_wei ?? "").trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
+      return NextResponse.json(
+        { error: "invalid_payment_to_address" },
+        { status: 400 },
+      );
+    }
+    if (token !== "ETH" && token !== "USDC") {
+      return NextResponse.json(
+        { error: "invalid_payment_token_must_be_ETH_or_USDC" },
+        { status: 400 },
+      );
+    }
+    try {
+      payment_amount_wei = BigInt(amountRaw);
+    } catch {
+      return NextResponse.json(
+        { error: "invalid_payment_amount_wei_must_be_integer_string" },
+        { status: 400 },
+      );
+    }
+    if (payment_amount_wei <= 0n) {
+      return NextResponse.json(
+        { error: "payment_amount_must_be_positive" },
+        { status: 400 },
+      );
+    }
+    // Hard cap per-tick spend: 0.1 ETH or 1000 USDC. Caps are
+    // unconditional protection against a compromised launcher signing
+    // an excessive envelope. Operators who need higher limits can edit
+    // these constants per deployment.
+    const MAX_ETH_WEI = 100_000_000_000_000_000n; // 0.1 ETH
+    const MAX_USDC_RAW = 1_000_000_000n; // 1000 USDC (6 decimals)
+    if (token === "ETH" && payment_amount_wei > MAX_ETH_WEI) {
+      return NextResponse.json(
+        {
+          error: "payment_amount_exceeds_per_tick_cap",
+          hint: "max 0.1 ETH per tick on this deployment.",
+        },
+        { status: 400 },
+      );
+    }
+    if (token === "USDC" && payment_amount_wei > MAX_USDC_RAW) {
+      return NextResponse.json(
+        {
+          error: "payment_amount_exceeds_per_tick_cap",
+          hint: "max 1000 USDC per tick on this deployment.",
+        },
+        { status: 400 },
+      );
+    }
+    payment_to = to.toLowerCase() as `0x${string}`;
+    payment_token = token;
+  }
 
   if (!prompt) {
     return NextResponse.json({ error: "empty_prompt" }, { status: 400 });
@@ -128,6 +198,13 @@ export async function POST(
     expires_at: expires_at_unix,
     task_kind,
     ts,
+    ...(task_kind === "payment"
+      ? {
+          payment_to: payment_to!,
+          payment_token: payment_token!,
+          payment_amount_wei: payment_amount_wei!.toString(),
+        }
+      : {}),
   });
 
   const verify = await verifySignedMessage({
@@ -184,9 +261,15 @@ export async function POST(
       signature,
       signed_message: message,
       next_run_at: nextRunAt.toISOString(),
+      payment_to,
+      payment_token,
+      // numeric column on the DB side, but the supabase client serializes
+      // bigint → string for the wire — give it a string explicitly.
+      payment_amount_wei:
+        payment_amount_wei !== null ? payment_amount_wei.toString() : null,
     })
     .select(
-      "id, agent_address, prompt, kind, interval_seconds, expires_at, created_at, next_run_at",
+      "id, agent_address, prompt, kind, interval_seconds, expires_at, created_at, next_run_at, payment_to, payment_token, payment_amount_wei",
     )
     .single();
 

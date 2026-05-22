@@ -156,17 +156,29 @@ export type SignedAction =
        *                       miroshark.bot.signa wallet auto-posts the
        *                       sim verdict via the existing webhook
        *                       (/api/webhooks/miroshark) when it lands.
+       *   "payment"         — every tick the agent wallet signs + broad-
+       *                       casts an EIP-1559 tx on Base mainnet
+       *                       sending payment_amount_wei of payment_token
+       *                       to payment_to. The agent also posts a
+       *                       wallet-signed audit entry with the tx hash.
+       *                       prompt is the human-readable memo, baked
+       *                       into the audit post.
        *
        * task_kind is OMITTED from the canonical message when it equals
-       * "post" so v0.18 signatures stay byte-identical and continue to
-       * verify after v0.19.
+       * "post" so v0.18 signatures stay byte-identical. payment_* fields
+       * are appended to the signed message ONLY when task_kind="payment"
+       * so v0.18 + v0.19 envelopes also stay byte-identical.
        */
       kind: "agent_autonomous_create";
       agent: string;
       prompt: string;
       interval_seconds: number;
       expires_at: number | null;
-      task_kind?: "post" | "miroshark_sim";
+      task_kind?: "post" | "miroshark_sim" | "payment";
+      // Required when task_kind = "payment", omitted otherwise.
+      payment_to?: string;
+      payment_token?: "ETH" | "USDC";
+      payment_amount_wei?: string;
       ts: number;
     }
   | {
@@ -271,6 +283,31 @@ export function buildMessageToSign(action: SignedAction): string {
         action.task_kind && action.task_kind !== "post"
           ? [`task_kind:${action.task_kind}`]
           : [];
+      // Payment-bound fields are appended ONLY for task_kind=payment so
+      // v0.18 + v0.19 envelopes stay byte-identical.
+      const paymentLines =
+        action.task_kind === "payment"
+          ? [
+              `payment_to:${action.payment_to}`,
+              `payment_token:${action.payment_token}`,
+              `payment_amount_wei:${action.payment_amount_wei}`,
+            ]
+          : [];
+      const authorizationLines =
+        action.task_kind === "payment"
+          ? [
+              `I authorize SIGNA to broadcast wallet-signed transactions`,
+              `from this agent on the cadence above, sending the exact`,
+              `amount and token specified to the exact address specified,`,
+              `until expiry or until I cancel.`,
+              `memo:${action.prompt}`,
+            ]
+          : [
+              `I authorize SIGNA to produce wallet-signed posts from this`,
+              `agent on the cadence above, using the prompt below as the`,
+              `text of each post. I can cancel any time.`,
+              `prompt:${action.prompt}`,
+            ];
       return [
         `SIGNA agent autonomous create v1`,
         `ts:${action.ts}`,
@@ -278,10 +315,8 @@ export function buildMessageToSign(action: SignedAction): string {
         `interval_seconds:${action.interval_seconds}`,
         `expires_at:${action.expires_at ?? "never"}`,
         ...kindLine,
-        `I authorize SIGNA to produce wallet-signed posts from this`,
-        `agent on the cadence above, using the prompt below as the`,
-        `text of each post. I can cancel any time.`,
-        `prompt:${action.prompt}`,
+        ...paymentLines,
+        ...authorizationLines,
       ].join("\n");
     }
     case "agent_autonomous_cancel":
