@@ -3,6 +3,8 @@ import { supabase } from "@/lib/supabase";
 import {
   mirosharkConfigured,
   mirosharkCreateSim,
+  mirosharkX402Configured,
+  mirosharkRunSimX402,
 } from "@/lib/skills/miroshark";
 
 export const runtime = "nodejs";
@@ -87,13 +89,17 @@ export async function POST(
   }
 
   // 503 BEFORE we touch the DB or rate limit. No point counting a fire
-  // against an IP if MiroShark isn't configured on this node.
-  if (!mirosharkConfigured()) {
+  // against an IP if no MiroShark path is configured on this node.
+  // Two valid paths:
+  //   1. x402-paid (v0.24+): MIROSHARK_X402_URL + X402_BUYER_PRIVATE_KEY
+  //   2. legacy free: MIROSHARK_BASE_URL + MIROSHARK_API_KEY
+  const useX402 = mirosharkX402Configured();
+  if (!useX402 && !mirosharkConfigured()) {
     return NextResponse.json(
       {
         ok: false,
         error: "miroshark_not_configured",
-        hint: "this SIGNA node hasn't set MIROSHARK_BASE_URL. ask the operator to wire it.",
+        hint: "set X402_BUYER_PRIVATE_KEY (preferred, x402-paid) or MIROSHARK_BASE_URL (legacy) on this SIGNA node.",
       },
       { status: 503 },
     );
@@ -167,8 +173,45 @@ export async function POST(
     );
   }
 
-  // Fire the sim. Attribution goes via the agent_address field so the
-  // MiroShark side knows the SIGNA agent that triggered it.
+  // x402-paid path (v0.24): SIGNA pays $1 USDC per sim from the
+  // X402_BUYER_PRIVATE_KEY wallet on Base Sepolia. Returns a wait_url
+  // the buyer can watch until the report is ready.
+  if (useX402) {
+    const x402 = await mirosharkRunSimX402({
+      prompt: scenario,
+      agentAddress: agent,
+      agentDid: userRow?.gitlawb_did ?? undefined,
+    });
+    if (!x402.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `miroshark_x402_${x402.stage}`,
+          message: x402.message,
+        },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      agent_address: agent,
+      sim_id: x402.run_id,
+      status: x402.status,
+      preview: null,
+      sim_url: x402.wait_url,
+      feed_url: `/feed/${agent}`,
+      payment: {
+        protocol: "x402-v2",
+        network: x402.network,
+        amount_usdc_base_units: x402.amount_paid,
+        tx_hash: x402.payment_tx_hash,
+      },
+      rate_limit_remaining: rl.remaining,
+    });
+  }
+
+  // Legacy free path. Falls back to mirosharkCreateSim when the x402
+  // env vars aren't set (older deployments).
   let sim: Awaited<ReturnType<typeof mirosharkCreateSim>> = null;
   try {
     sim = await mirosharkCreateSim({
