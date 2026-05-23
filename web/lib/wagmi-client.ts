@@ -1,6 +1,6 @@
 "use client";
 
-import { base, mainnet } from "wagmi/chains";
+import { base, baseSepolia, mainnet } from "wagmi/chains";
 import {
   createConfig,
   http,
@@ -100,10 +100,11 @@ const connectors = connectorsForWallets(
 );
 
 export const clientWagmiConfig = createConfig({
-  chains: [base, mainnet],
+  chains: [base, baseSepolia, mainnet],
   connectors,
   transports: {
     [base.id]: http(),
+    [baseSepolia.id]: http(),
     [mainnet.id]: http(),
   },
   ssr: true,
