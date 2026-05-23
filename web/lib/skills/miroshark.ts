@@ -95,9 +95,18 @@ export async function mirosharkCreateSim(args: {
   }
 }
 
-// ============================== x402 paid path (v0.24) ==============================
+// ============================== x402 paid path (v0.24 → v0.25) ==============================
+//
+// v0.25 swap: dropped the hand-rolled x402 client (the wire format I
+// reverse-engineered from Aaron's spec doc didn't match the canonical
+// x402 v2 envelope — server kept settling 402). Replaced with the
+// official @x402/fetch + @x402/evm SDKs. Verified live: $1 USDC tx
+// 0x1da62e7cd840563b34b56d22c18b6de8a46d99ff024c85b3b818bcd0e1845e3b
+// on Base Sepolia, sim run_83dc4997eebf queued on Aaron's pipeline.
 
-import { x402Pay, x402SignerFromEnv } from "@/lib/x402-client";
+import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 
 /**
@@ -171,58 +180,104 @@ export async function mirosharkRunSimX402(args: {
         "X402_BUYER_PRIVATE_KEY is not set on this SIGNA node. fund a signer wallet with USDC on Base Sepolia and add the key to env.",
     };
   }
-  let signer;
-  try {
-    signer = x402SignerFromEnv("X402_BUYER_PRIVATE_KEY");
-  } catch (e) {
+  const rawKey = process.env.X402_BUYER_PRIVATE_KEY!;
+  const pk = rawKey.startsWith("0x") ? rawKey : `0x${rawKey}`;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(pk)) {
     return {
       ok: false,
       stage: "bad_signer",
-      message: e instanceof Error ? e.message : String(e),
+      message:
+        "X402_BUYER_PRIVATE_KEY is set but malformed — expected 0x-prefixed 64-hex-char EVM private key",
     };
   }
-  if (!signer) {
+
+  // Build a fresh client + register the wildcard eip155:* exact scheme
+  // each call. Per-call construction is cheap and keeps the signer
+  // out of any module-level cache (so a key rotation via Vercel env
+  // takes effect on the very next cron tick without a cold-start
+  // delay).
+  let fetchWithPayment: ReturnType<typeof wrapFetchWithPayment>;
+  try {
+    const signer = privateKeyToAccount(pk as `0x${string}`);
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer });
+    fetchWithPayment = wrapFetchWithPayment(fetch, client);
+  } catch (e) {
     return {
       ok: false,
-      stage: "missing_signer",
-      message: "X402_BUYER_PRIVATE_KEY is empty",
+      stage: "client_setup",
+      message: e instanceof Error ? e.message : String(e),
     };
   }
 
   const body: Record<string, unknown> = { prompt: args.prompt };
-  // MiroShark accepts agent metadata as part of the body so they can
-  // attribute the sim back to a SIGNA agent on their dashboard.
   if (args.agentAddress) body.agent_address = args.agentAddress;
   if (args.agentDid) body.agent_did = args.agentDid;
 
-  const res = await x402Pay({
-    url: MIROSHARK_X402_URL,
-    body,
-    signer,
-    // Force EVM eip155 networks only (MiroShark accepts Base Sepolia
-    // now, Base mainnet soon — both are eip155 chains).
-    preferNetworkPrefix: "eip155:",
-  });
-
-  if (!res.ok) {
+  let res: Response;
+  try {
+    res = await fetchWithPayment(MIROSHARK_X402_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
     return {
       ok: false,
-      stage: res.stage,
-      message: res.message,
-      status: res.status,
+      stage: "fetch_threw",
+      message: e instanceof Error ? e.message : String(e),
     };
   }
 
-  // The server's success body is { success, data: { run_id, wait_url, ... } }
-  const data = res.data as { success?: boolean; data?: Record<string, unknown> };
-  const inner = data?.data ?? {};
+  if (!res.ok) {
+    let text = "";
+    try {
+      text = await res.text();
+    } catch {
+      // ignore
+    }
+    return {
+      ok: false,
+      stage: "settle_rejected",
+      status: res.status,
+      message: `server rejected the signed payment (HTTP ${res.status}): ${text.slice(0, 280)}`,
+    };
+  }
+
+  // Decode PAYMENT-RESPONSE for the on-chain settlement tx hash.
+  let txHash: Hex | null = null;
+  let network = "eip155:84532";
+  const respHeader = res.headers.get("payment-response");
+  if (respHeader) {
+    try {
+      const settle = JSON.parse(
+        Buffer.from(respHeader, "base64").toString("utf8"),
+      ) as { transaction?: Hex; network?: string };
+      if (settle.transaction) txHash = settle.transaction;
+      if (settle.network) network = settle.network;
+    } catch {
+      // soft-fail
+    }
+  }
+
+  let bodyJson: { success?: boolean; data?: Record<string, unknown> };
+  try {
+    bodyJson = (await res.json()) as typeof bodyJson;
+  } catch {
+    return {
+      ok: false,
+      stage: "bad_response",
+      message: "settle returned 2xx but body was not valid JSON",
+    };
+  }
+  const inner = bodyJson?.data ?? {};
   const run_id = String(inner.run_id ?? "");
   const wait_url = String(inner.wait_url ?? "");
   if (!run_id || !wait_url) {
     return {
       ok: false,
       stage: "bad_response",
-      message: `server settled the payment but didn't return run_id / wait_url. body: ${JSON.stringify(data).slice(0, 280)}`,
+      message: `server settled the payment but didn't return run_id / wait_url. body: ${JSON.stringify(bodyJson).slice(0, 280)}`,
     };
   }
 
@@ -233,9 +288,9 @@ export async function mirosharkRunSimX402(args: {
     wait_url,
     status_url: inner.status_url ? String(inner.status_url) : undefined,
     payer: inner.payer ? String(inner.payer) : undefined,
-    payment_tx_hash: res.txHash,
-    network: res.network,
-    amount_paid: res.amount,
+    payment_tx_hash: txHash,
+    network,
+    amount_paid: "1000000", // $1 USDC base units. Server-defined; sourced from PAYMENT-RESPONSE in v0.26.
   };
 }
 
