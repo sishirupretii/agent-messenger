@@ -102,10 +102,15 @@ const connectors = connectorsForWallets(
 export const clientWagmiConfig = createConfig({
   chains: [base, baseSepolia, mainnet],
   connectors,
+  // Explicit CORS-friendly public RPCs — see the comment in `lib/wagmi.ts`.
+  // Defaulting to viem's `http()` with no arg falls into a rotating
+  // public-RPC list (eth.merkle.io et al) that doesn't allow CORS from
+  // browser origins, polluting devtools with CORS errors that look
+  // like bugs.
   transports: {
-    [base.id]: http(),
-    [baseSepolia.id]: http(),
-    [mainnet.id]: http(),
+    [base.id]: http("https://mainnet.base.org"),
+    [baseSepolia.id]: http("https://sepolia.base.org"),
+    [mainnet.id]: http("https://cloudflare-eth.com"),
   },
   ssr: true,
   storage: createStorage({ storage: cookieStorage }),
