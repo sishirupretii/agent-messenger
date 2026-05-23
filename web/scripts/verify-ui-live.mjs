@@ -41,15 +41,32 @@ async function main() {
   page.on("console", (msg) => {
     if (msg.type() === "error") {
       const text = msg.text();
-      // Filter the expected "no walletconnect" noise from blocked
-      // relay calls — we know about those, they're not a real bug.
       if (/relay\.walletconnect|verify\.walletconnect/i.test(text)) return;
       consoleErrors.push(text);
     }
   });
   page.on("requestfailed", (req) => {
-    if (/walletconnect/i.test(req.url())) return; // expected
+    if (/walletconnect/i.test(req.url())) return;
+    // Next.js auto-prefetches HEAD requests for fast nav; they abort
+    // when the test closes the page. Benign.
+    if (
+      req.method() === "HEAD" &&
+      req.failure()?.errorText === "net::ERR_ABORTED"
+    )
+      return;
+    // RSC prefetches also abort on page teardown.
+    if (/\?_rsc=/.test(req.url()) && req.failure()?.errorText === "net::ERR_ABORTED")
+      return;
     networkFails.push(`${req.method()} ${req.url()} — ${req.failure()?.errorText}`);
+  });
+  // Log non-OK responses so we can see what's behind the 400/403 noise.
+  page.on("response", (resp) => {
+    const status = resp.status();
+    if (status >= 400 && status < 600) {
+      const url = resp.url();
+      if (/walletconnect/i.test(url)) return;
+      networkFails.push(`HTTP ${status} ${resp.request().method()} ${url}`);
+    }
   });
 
   console.log(`→  navigating to ${URL}`);

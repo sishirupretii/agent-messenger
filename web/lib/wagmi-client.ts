@@ -52,9 +52,15 @@ import {
  *   but wagmi auto-recovers within one render cycle.
  */
 
-const projectId =
+// Trim is critical here: the Vercel env value for NEXT_PUBLIC_
+// WALLETCONNECT_PROJECT_ID came in with a trailing newline at some
+// point, and web3modal's config API URL-encodes it as `%0A` then
+// rejects the request with HTTP 403. The visible symptom was mobile
+// wallets failing to deep-link with no clear error. Cheap insurance.
+const projectId = (
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ??
-  "MISSING_WALLETCONNECT_PROJECT_ID";
+  "MISSING_WALLETCONNECT_PROJECT_ID"
+).trim();
 
 if (projectId === "MISSING_WALLETCONNECT_PROJECT_ID") {
   // eslint-disable-next-line no-console
