@@ -1,43 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAccount, useChainId, useReadContract, useSwitchChain, useWalletClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import {
-  EXPECTED_X402_CHAIN_ID,
-  EXPECTED_USDC_ADDRESS,
-  FAUCET_URL,
   MirosharkSimResult,
   SIM_PRICE_BASE_UNITS,
   USDC_BALANCE_ABI,
+  X402Info,
   basescanTxUrl,
+  fetchX402Info,
   fireMirosharkSim,
   formatUsdcBalance,
 } from "@/lib/x402-client";
 
 /**
- * Public "Run a sim" button — v0.26 visitor-pays edition.
+ * Public "Run a sim" button — v0.26.1 chain-agnostic edition.
  *
  * Any visitor with an EVM wallet (MetaMask, Coinbase, Rainbow, Trust,
- * Phantom, OKX, WalletConnect…) can click → connect → sign → pay $1
- * USDC straight to MiroShark. SIGNA's own wallet never enters the
- * flow. The verdict still auto-posts to /feed/miroshark via the
- * existing MiroShark→SIGNA webhook (attribution rides on the
- * agent_address we include in the request body).
+ * Phantom, OKX, WalletConnect…) can click → connect → sign → pay
+ * straight to MiroShark. SIGNA's own wallet never enters the flow.
  *
- * UX states are explicit so a visitor never has to guess what they
- * need to do next:
- *   - disconnected → "Connect wallet to fire"
- *   - wrong chain  → "Switch to Base Sepolia"
- *   - 0 USDC       → "Get $1 testnet USDC at faucet.circle.com →"
- *   - ready        → "Fire sim · $1 USDC"
- *   - signing      → "Confirm in your wallet…"
- *   - settled      → wait_url + tx hash on basescan
+ * Chain, USDC contract, payTo, faucet/onramp link are all driven by
+ * `GET /api/x402/info` which probes Aaron's MiroShark endpoint and
+ * reads the live 402 challenge. The moment Aaron flips his Railway
+ * env from Sepolia to mainnet, the probe returns eip155:8453 and the
+ * UI follows — zero deploy on our side.
  *
- * Chain is currently Base Sepolia per Aaron's Railway endpoint. When
- * he flips to mainnet, the single constant flip in x402-client.ts
- * carries through here automatically — including the chain switch
- * prompt and the basescan link.
+ * UX states are explicit so a visitor never has to guess:
+ *   - probe loading → "Connect wallet" disabled until info is ready
+ *   - disconnected  → "Connect wallet to fire"
+ *   - wrong chain   → "Switch to <chain_label>"
+ *   - 0 USDC        → "Get $1 USDC ↗" (faucet on testnet, onramp on mainnet)
+ *   - ready         → "fire sim · $1 USDC"
+ *   - signing       → "confirm in your wallet…"
+ *   - settled       → wait_url + tx hash on basescan
  */
 export function RunSimButton({
   agentAddress,
@@ -50,6 +47,7 @@ export function RunSimButton({
   const [scenario, setScenario] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<MirosharkSimResult | null>(null);
+  const [info, setInfo] = useState<X402Info | null>(null);
 
   const { address: account, isConnected } = useAccount();
   const chainId = useChainId();
@@ -57,20 +55,36 @@ export function RunSimButton({
   const { data: walletClient } = useWalletClient();
   const { openConnectModal } = useConnectModal();
 
-  const onExpectedChain = chainId === EXPECTED_X402_CHAIN_ID;
+  // Probe Aaron's endpoint once on mount. The /api/x402/info route is
+  // cached server-side for 5 min so this is essentially free for the
+  // visitor and Aaron's server only gets pinged 12x/hr per SIGNA
+  // instance regardless of agent-page traffic.
+  useEffect(() => {
+    let cancelled = false;
+    fetchX402Info().then((res) => {
+      if (!cancelled) setInfo(res);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  // Read the visitor's USDC balance on the expected chain so we can
-  // surface "you need $1 USDC" BEFORE they click and sign a doomed
-  // authorization. Disabled until they're connected on the right chain
-  // (otherwise wagmi spams the wrong RPC).
+  const onExpectedChain = info ? chainId === info.chain_id : false;
+
+  // Read the visitor's USDC balance on whatever chain Aaron is
+  // serving. Disabled until we know the asset/chain from the probe
+  // AND the visitor has switched their wallet to that chain. The
+  // chain_id is cast to wagmi's configured chain union — the wagmi
+  // config already includes base / baseSepolia / mainnet (lib/wagmi-
+  // client.ts), so any chain Aaron actually serves is covered.
   const { data: usdcBalance } = useReadContract({
-    address: EXPECTED_USDC_ADDRESS,
+    address: info?.asset,
     abi: USDC_BALANCE_ABI,
     functionName: "balanceOf",
     args: account ? [account] : undefined,
-    chainId: EXPECTED_X402_CHAIN_ID,
+    chainId: info?.chain_id as 8453 | 84532 | 1 | undefined,
     query: {
-      enabled: Boolean(account && onExpectedChain),
+      enabled: Boolean(account && onExpectedChain && info?.asset),
       refetchInterval: 15_000,
     },
   });
@@ -85,7 +99,12 @@ export function RunSimButton({
     scenario.trim().length <= MAX_SCENARIO;
 
   const canFire =
-    isConnected && onExpectedChain && hasEnough && scenarioValid && !submitting;
+    info &&
+    isConnected &&
+    onExpectedChain &&
+    hasEnough &&
+    scenarioValid &&
+    !submitting;
 
   async function fire() {
     if (!canFire || !walletClient) return;
@@ -108,6 +127,13 @@ export function RunSimButton({
       setSubmitting(false);
     }
   }
+
+  const fundingHref = info?.faucet_url ?? info?.onramp_url ?? null;
+  const fundingLabel = info?.faucet_url
+    ? `Get $1 testnet USDC ↗`
+    : info?.onramp_url
+      ? `Buy $1 USDC on Coinbase ↗`
+      : null;
 
   return (
     <div className="border border-white/10 bg-black/30 rounded-sm">
@@ -147,6 +173,14 @@ export function RunSimButton({
               Payment goes straight from your wallet to MiroShark — SIGNA
               never touches the funds.
             </span>
+            {info && (
+              <>
+                {" "}
+                <span className="text-white/40">
+                  Network: {info.chain_label} ({info.network}).
+                </span>
+              </>
+            )}
           </div>
 
           <textarea
@@ -171,7 +205,17 @@ export function RunSimButton({
               )}
             </div>
 
-            {!isConnected && (
+            {!info && (
+              <button
+                type="button"
+                disabled
+                className="bg-white/10 text-white/40 font-semibold text-[12.5px] rounded-sm px-3.5 py-1.5 uppercase tracking-wide cursor-not-allowed"
+              >
+                checking network…
+              </button>
+            )}
+
+            {info && !isConnected && (
               <button
                 type="button"
                 onClick={() => openConnectModal?.()}
@@ -181,29 +225,29 @@ export function RunSimButton({
               </button>
             )}
 
-            {isConnected && !onExpectedChain && (
+            {info && isConnected && !onExpectedChain && (
               <button
                 type="button"
                 disabled={switchPending}
-                onClick={() => switchChain({ chainId: EXPECTED_X402_CHAIN_ID })}
+                onClick={() => switchChain({ chainId: info.chain_id as 8453 | 84532 | 1 })}
                 className="bg-amber-400/90 text-black font-semibold text-[12.5px] rounded-sm px-3.5 py-1.5 uppercase tracking-wide hover:brightness-110 transition disabled:opacity-40"
               >
-                {switchPending ? "switching…" : "Switch to Base Sepolia"}
+                {switchPending ? "switching…" : `Switch to ${info.chain_label}`}
               </button>
             )}
 
-            {isConnected && onExpectedChain && !hasEnough && (
+            {info && isConnected && onExpectedChain && !hasEnough && fundingHref && fundingLabel && (
               <a
-                href={FAUCET_URL}
+                href={fundingHref}
                 target="_blank"
                 rel="noreferrer"
                 className="bg-amber-400/90 text-black font-semibold text-[12.5px] rounded-sm px-3.5 py-1.5 uppercase tracking-wide hover:brightness-110 transition"
               >
-                Get $1 testnet USDC ↗
+                {fundingLabel}
               </a>
             )}
 
-            {isConnected && onExpectedChain && hasEnough && (
+            {info && isConnected && onExpectedChain && hasEnough && (
               <button
                 type="button"
                 onClick={fire}
@@ -313,7 +357,7 @@ function hintForStage(
   }
   if (stage === "settle_rejected") {
     if (/insufficient|balance/i.test(message)) {
-      return "you need at least $1 USDC on Base Sepolia. grab some at faucet.circle.com.";
+      return "wallet didn't have enough USDC for this sim. top up and retry.";
     }
     if (/nonce|already used/i.test(message)) {
       return "this signed payment was already submitted. try once more — the client will mint a fresh nonce.";
