@@ -1,4 +1,4 @@
-import { base, mainnet } from "wagmi/chains";
+import { base, baseSepolia, mainnet } from "wagmi/chains";
 import {
   createConfig,
   http,
@@ -31,11 +31,13 @@ import { injected } from "wagmi/connectors";
  */
 export const wagmiConfig = createConfig({
   // base = primary app chain (real ETH, real txs).
+  // baseSepolia = MiroShark x402 endpoint (testnet today; flips to mainnet when Aaron switches his Railway env).
   // mainnet = ENS reverse + Basenames (via ENSIP-19 coinType) read from base too.
-  chains: [base, mainnet],
+  chains: [base, baseSepolia, mainnet],
   connectors: [injected({ shimDisconnect: true })],
   transports: {
     [base.id]: http(),
+    [baseSepolia.id]: http(),
     [mainnet.id]: http(),
   },
   ssr: true,
