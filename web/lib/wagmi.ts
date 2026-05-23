@@ -35,10 +35,17 @@ export const wagmiConfig = createConfig({
   // mainnet = ENS reverse + Basenames (via ENSIP-19 coinType) read from base too.
   chains: [base, baseSepolia, mainnet],
   connectors: [injected({ shimDisconnect: true })],
+  // Explicit CORS-friendly public RPCs. viem's default `http()` with no
+  // arg picks an upstream from a rotating list of public endpoints
+  // (eth.merkle.io et al) — most don't allow CORS from arbitrary
+  // origins, so wagmi's background chain probing throws CORS errors in
+  // every visitor's devtools. Harmless functionally (real reads go via
+  // the user's wallet provider), but it clutters logs and looks like
+  // a bug to anyone who peeks at the console.
   transports: {
-    [base.id]: http(),
-    [baseSepolia.id]: http(),
-    [mainnet.id]: http(),
+    [base.id]: http("https://mainnet.base.org"),
+    [baseSepolia.id]: http("https://sepolia.base.org"),
+    [mainnet.id]: http("https://cloudflare-eth.com"),
   },
   ssr: true,
   storage: createStorage({ storage: cookieStorage }),
