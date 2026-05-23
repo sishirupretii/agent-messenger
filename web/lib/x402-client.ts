@@ -3,51 +3,60 @@
 /**
  * Browser-side x402 v2 client for the public "Run a sim" button.
  *
- * v0.26 (visitor-pays): The signer is the VISITOR's connected wallet,
- * not a server-held key. SIGNA never touches the $1 USDC — it goes
- * straight from the visitor's wallet to MiroShark's payTo address via
- * the Coinbase CDP facilitator's EIP-3009 settle path. No server-side
- * spend.
+ * v0.26.1 (chain-agnostic): the network / asset / payTo are no longer
+ * hardcoded — we probe `/api/x402/info` (which in turn issues a no-
+ * payment POST to Aaron's MiroShark endpoint and parses the 402
+ * challenge header) and the UI follows whatever Aaron is currently
+ * serving. When he flips his Railway env from Sepolia to mainnet, the
+ * probe returns `eip155:8453` and visitors auto-prompt-switch to Base
+ * mainnet on their next page view — zero code change on our side.
  *
- * Network: defaults to Base Sepolia (eip155:84532) — Aaron's current
- * MiroShark Railway endpoint. The 402 challenge response from his
- * server is what actually defines the network the buyer signs for, so
- * when he flips his env to Base mainnet the only change here is the
- * EXPECTED_X402_CHAIN_ID constant (so we prompt the user's wallet to
- * switch to the right chain before signing).
- *
- * The `signer` we pass to @x402/evm is a minimal adapter over viem's
- * WalletClient + Account, matching the ClientEvmSigner interface in
- * @x402/evm/exact/client. No private key ever lives in browser memory
- * — every signTypedData call routes through the wallet's UI.
+ * The signer is still the visitor's connected wallet (wagmi
+ * WalletClient adapted to x402's ClientEvmSigner). SIGNA never holds
+ * a buyer key.
  */
 
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import type { WalletClient, Account } from "viem";
-import { baseSepolia } from "viem/chains";
 
 export const MIROSHARK_X402_URL =
   process.env.NEXT_PUBLIC_MIROSHARK_X402_URL ||
   "https://miroshark-x402-production.up.railway.app/x402/run";
 
 /**
- * Chain the visitor's wallet must be on to sign Aaron's 402 challenge.
- * Flip to `base.id` (8453) on the same day Aaron flips his Railway env
- * — the 402 challenge itself drives the actual asset/payTo from then on.
+ * Shape returned by `GET /api/x402/info`. The route always responds
+ * with `ok: true` — on probe failure it falls back to Base Sepolia
+ * defaults so the UI keeps working.
  */
-export const EXPECTED_X402_CHAIN_ID = baseSepolia.id;
+export type X402Info = {
+  ok: true;
+  network: string;
+  chain_id: number;
+  asset: `0x${string}`;
+  pay_to: `0x${string}`;
+  amount: string;
+  chain_label: string;
+  faucet_url: string | null;
+  onramp_url: string | null;
+  probed_at: string;
+  source: "probe" | string;
+};
 
-/**
- * USDC contract on Base Sepolia per Aaron's doc. Used for the
- * pre-flight balance check so we can show "go to faucet" before the
- * visitor signs a doomed authorization. On mainnet swap to
- * 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913.
- */
-export const EXPECTED_USDC_ADDRESS =
-  "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as const;
-
-export const FAUCET_URL = "https://faucet.circle.com/";
+export async function fetchX402Info(): Promise<X402Info | null> {
+  try {
+    const res = await fetch("/api/x402/info", {
+      method: "GET",
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as X402Info;
+    if (!json.ok) return null;
+    return json;
+  } catch {
+    return null;
+  }
+}
 
 export type MirosharkSimResult =
   | {
@@ -93,6 +102,12 @@ function decodeBase64Json<T>(b64: string): T | null {
  * it to x402's signer interface — only `address` + `signTypedData` are
  * required. The signTypedData call surfaces in the user's wallet UI
  * (MetaMask popup, Coinbase Wallet sheet, WalletConnect deep-link).
+ *
+ * The x402 client doesn't care which network Aaron is serving — the
+ * server-side 402 challenge dictates network/asset/payTo, and the
+ * registered scheme matches via wildcard `eip155:*`. Our role is just
+ * to make sure the visitor's wallet is on the right chain when this
+ * runs — that's RunSimButton's job, driven by the probe info.
  */
 export async function fireMirosharkSim(args: {
   walletClient: WalletClient | null | undefined;
@@ -118,10 +133,6 @@ export async function fireMirosharkSim(args: {
     };
   }
 
-  // viem's `signTypedData` is heavily generic; x402's ClientEvmSigner
-  // takes a loose `Record<string, unknown>` shape. The runtime call is
-  // identical, so we narrow the WalletClient surface to the shape x402
-  // needs and stop fighting the generics.
   type LooseSignTypedData = (args: {
     account: Account;
     domain: Record<string, unknown>;
@@ -190,8 +201,6 @@ export async function fireMirosharkSim(args: {
     };
   }
 
-  // Decode PAYMENT-RESPONSE for the on-chain settlement tx + the actual
-  // network (Aaron's server is authoritative — if he flipped, we follow).
   let txHash: `0x${string}` | null = null;
   let network = "eip155:84532";
   const respHeader = res.headers.get("payment-response");
