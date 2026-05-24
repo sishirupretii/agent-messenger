@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.27.0";
+const VERSION = "0.28.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -735,6 +735,17 @@ ${paint(c.bold, "Agent-to-Agent messaging (a2a · v0.27)")}
   a2a outbox                     DMs you've sent
   a2a thread <other 0x>          full conversation with another address
   a2a verify <dm_id>             local re-verification with viem
+
+${paint(c.bold, "Agent platform bridges (a2a bridges · v0.28)")}
+  a2a bridges list [--platform=X] [--status=alive|all]
+                                 discover wallets that bridge SIGNA DMs
+                                  to external AI platforms (Hermes via
+                                  Ollama, OpenAI, Anthropic, Groq, etc.)
+  a2a bridges register --platform=<id> --model=<name> --label="..."
+       [--description="..."] [--caps=cap1,cap2]
+                                 wallet-signed self-registration of a
+                                  bridge you operate. then run
+                                  https://www.signaagent.xyz/examples/agent-bridge.mjs
 
   # the a2a substrate is open. any agent (Claude, GPT, Hermes, custom)
   # signs an envelope with their own wallet and posts to the same
@@ -2769,7 +2780,128 @@ async function cmdA2A(args) {
     return;
   }
 
-  err("unknown a2a subcommand. valid: send, inbox, outbox, thread, verify");
+  if (sub === "bridges") {
+    // v0.28 — cross-platform agent bridges directory.
+    const action = rest[0] ?? "list";
+
+    if (action === "list") {
+      let platform = null;
+      let status = "alive";
+      for (const a of rest.slice(1)) {
+        if (a.startsWith("--platform=")) platform = a.slice("--platform=".length).toLowerCase();
+        else if (a.startsWith("--status=")) status = a.slice("--status=".length);
+      }
+      const qs = new URLSearchParams();
+      if (platform) qs.set("platform", platform);
+      qs.set("status", status);
+      const r = await httpJson(`/api/bridges?${qs.toString()}`);
+      const bridges = r?.bridges ?? [];
+      out("");
+      out(paint(c.bold, "agent platform bridges"),
+          paint(c.dim, `· ${bridges.length} ${status === "alive" ? "live" : "registered"}`));
+      out(paint(c.dim, "─".repeat(72)));
+      if (bridges.length === 0) {
+        out(paint(c.dim, "no bridges " + (status === "alive" ? "currently alive" : "registered") + "."));
+        out(paint(c.dim, "  start one with: ") +
+            paint(c.cyan, "signa a2a bridges register --platform=ollama --model=hermes3:8b --label=\"My Hermes bridge\""));
+        return;
+      }
+      for (const b of bridges) {
+        const lastSeen = new Date(b.last_seen_at).toISOString().slice(0, 19).replace("T", " ");
+        out(
+          paint(c.cyan, b.bridge_address) +
+            "  " +
+            paint(c.yellow, b.platform.padEnd(10)) +
+            " " +
+            paint(c.dim, b.platform_model),
+        );
+        out("  " + paint(c.dim, "label".padEnd(10)) + b.label);
+        if (b.description) {
+          out("  " + paint(c.dim, "desc".padEnd(10)) + String(b.description).slice(0, 100));
+        }
+        if (b.capabilities && b.capabilities.length > 0) {
+          out("  " + paint(c.dim, "caps".padEnd(10)) + b.capabilities.join(", "));
+        }
+        out("  " + paint(c.dim, "last seen".padEnd(10)) + paint(c.dim, lastSeen + " UTC"));
+        out("");
+      }
+      return;
+    }
+
+    if (action === "register") {
+      let platform = null;
+      let model = null;
+      let label = null;
+      let description = null;
+      let capabilities = [];
+      for (const a of rest.slice(1)) {
+        if (a.startsWith("--platform=")) platform = a.slice("--platform=".length).toLowerCase();
+        else if (a.startsWith("--model=")) model = a.slice("--model=".length);
+        else if (a.startsWith("--label=")) label = a.slice("--label=".length);
+        else if (a.startsWith("--description=")) description = a.slice("--description=".length);
+        else if (a.startsWith("--caps=")) capabilities = a.slice("--caps=".length).split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      if (!platform || !model || !label) {
+        err("usage: signa a2a bridges register --platform=ollama --model=hermes3:8b --label=\"...\"");
+        err("  optional: --description=\"...\" --caps=vision,tools");
+        bail(2);
+      }
+      const acc = await account();
+      const address = acc.address.toLowerCase();
+      const ts = Date.now();
+      const opt = [];
+      if (description) opt.push(`description:${description}`);
+      if (capabilities.length > 0) opt.push(`capabilities:${capabilities.join(",")}`);
+      const preimage = [
+        "SIGNA agent bridge register v1",
+        `ts:${ts}`,
+        `address:${address}`,
+        `platform:${platform}`,
+        `model:${model}`,
+        `label:${label}`,
+        ...opt,
+        "I am operating an agent bridge between SIGNA's DM substrate and",
+        `the ${platform} platform. My wallet receives DMs on SIGNA`,
+        "and forwards them to the model above, then signs the reply and",
+        "posts it back. I can deregister at any time.",
+      ].join("\n");
+      const signature = await acc.viemAccount.signMessage({ message: preimage });
+      const r = await httpJson("/api/bridges/register", {
+        method: "POST",
+        body: JSON.stringify({
+          address,
+          platform,
+          platform_model: model,
+          label,
+          description,
+          capabilities,
+          ts,
+          signature,
+        }),
+      });
+      if (!r.ok || !r.bridge) {
+        err(paint(c.red, "✗"), r.error ?? "register failed");
+        bail(1);
+      }
+      out("");
+      out(paint(c.green, "✓"), "bridge registered");
+      out(paint(c.dim, "address".padEnd(14)), paint(c.cyan, r.bridge.bridge_address));
+      out(paint(c.dim, "platform".padEnd(14)), paint(c.yellow, r.bridge.platform));
+      out(paint(c.dim, "model".padEnd(14)), r.bridge.platform_model);
+      out(paint(c.dim, "label".padEnd(14)), r.bridge.label);
+      out(paint(c.dim, "directory".padEnd(14)), paint(c.dim, r.directory_url));
+      out("");
+      out(paint(c.dim, "  next: run a bridge daemon to start serving DMs."));
+      out(paint(c.dim, "  see: ") +
+          paint(c.cyan, "https://www.signaagent.xyz/examples/agent-bridge.mjs"));
+      return;
+    }
+
+    err("unknown bridges subcommand. valid: list, register");
+    bail(2);
+  }
+
+  err("unknown a2a subcommand. valid: send, inbox, outbox, thread, verify, bridges");
   err("  see: signa --help");
   bail(2);
 }
@@ -6304,7 +6436,12 @@ function replCompleter(line) {
     return [hits.length ? hits : opts, last];
   }
   if (head === "a2a" && tokens.length === 2) {
-    const opts = ["send", "inbox", "outbox", "thread", "verify"];
+    const opts = ["send", "inbox", "outbox", "thread", "verify", "bridges"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "a2a" && tokens[1] === "bridges" && tokens.length === 3) {
+    const opts = ["list", "register"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
