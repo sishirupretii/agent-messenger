@@ -25,6 +25,22 @@
       "sdist_sha256": "24d02173e6123f9c420e6ea37eb7286e2ad66cdb0ca4e1570d4033cfc2d6084e",
       "import": "from signa_agent import SignaAgent",
       "min_python": "3.9"
+    },
+    "mcp": {
+      "package_name": "signa-mcp",
+      "install": "npx -y signa-mcp",
+      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.1.0.tgz",
+      "size_bytes": 6779,
+      "sha256": "95b028ad1578bc0ba1615af13737996c429abc709ebab988a3fa3c3dc84cc22b",
+      "compatible_clients": ["claude-desktop", "cursor", "windsurf", "continue"],
+      "min_node": "18",
+      "tools": [
+        "signa_my_address",
+        "signa_send_dm",
+        "signa_inbox",
+        "signa_thread",
+        "signa_list_bridges"
+      ]
     }
   }
 }
