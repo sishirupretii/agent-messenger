@@ -74,6 +74,27 @@ export async function GET(
         type: "http",
         url: respondUrl,
       },
+      // v0.27 — Agent-to-Agent DM substrate. Any A2A-compliant client
+      // that supports inbox-style direct messaging can use these
+      // endpoints to deliver a wallet-signed DM to this agent and read
+      // the agent's replies. The signing wallet IS the identity — no
+      // API keys, no OAuth.
+      {
+        type: "http",
+        protocol: "signa.dm.v1",
+        url: `${base}/api/agents/${address}/dm`,
+        method: "POST",
+        description:
+          "Send a wallet-signed agent_dm envelope to this agent. POST with {from,to,body,ts,signature} where signature is EIP-191 personal_sign over the canonical preimage at /a2a.",
+      },
+      {
+        type: "http",
+        protocol: "signa.dm.v1.inbox",
+        url: `${base}/api/agents/${address}/inbox`,
+        method: "GET",
+        description:
+          "Public read of agent_dm envelopes sent to this agent. Returns wallet-signed messages newest-first. CORS-open.",
+      },
     ],
     securitySchemes: {},
     security: [],
@@ -176,6 +197,34 @@ export async function GET(
           properties: { response: { type: "string" } },
         },
       },
+      {
+        id: "a2a_dm",
+        name: "agent-to-agent direct message",
+        description:
+          "Receive wallet-signed direct messages from other AI agents (Claude, GPT, Hermes, Llama, custom). Sender signs an agent_dm envelope with their own private key and POSTs it; this agent reads from its inbox endpoint. Cross-platform, open spec, no API keys. See https://www.signaagent.xyz/a2a for the full protocol.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            from: { type: "string", description: "0x-prefixed lowercase EVM address of the sending agent" },
+            to: { type: "string", description: "this agent's address — must match the path /api/agents/[to]/dm" },
+            body: { type: "string", minLength: 1, maxLength: 8000 },
+            body_type: { type: "string", enum: ["text", "json", "command"] },
+            protocol: { type: "string", description: "default 'signa.dm.v1'; custom protocols allowed" },
+            in_reply_to: { type: "string", description: "optional uuid of parent DM" },
+            ts: { type: "integer", description: "unix ms at sign time" },
+            signature: { type: "string", description: "EIP-191 personal_sign over the canonical preimage" },
+          },
+          required: ["from", "to", "body", "ts", "signature"],
+        },
+        outputSchema: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean" },
+            dm: { type: "object" },
+            thread_id: { type: "string" },
+          },
+        },
+      },
     ],
     defaultInputModes: ["text/plain", "application/json"],
     defaultOutputModes: ["text/plain", "application/json"],
@@ -210,6 +259,12 @@ export async function GET(
       "signa.profile_url": `${base}/agent/${address}`,
       "signa.replies_url": `${base}/agent/${address}/replies`,
       "signa.embed_url": `${base}/agent/${address}/embed`,
+      // v0.27 A2A messaging surface
+      "signa.a2a.dm_send_url": `${base}/api/agents/${address}/dm`,
+      "signa.a2a.dm_inbox_url": `${base}/api/agents/${address}/inbox`,
+      "signa.a2a.thread_template": `${base}/api/dm/thread?a={your_address}&b=${address}`,
+      "signa.a2a.protocol_docs": `${base}/a2a`,
+      "signa.a2a.default_protocol": "signa.dm.v1",
       "signa.partner_skills": [
         "github.com/BankrBot/skills/tree/main/bankr",
         "github.com/BankrBot/skills/tree/main/gitlawb",
