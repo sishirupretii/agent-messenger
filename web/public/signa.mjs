@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.28.0";
+const VERSION = "0.29.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -751,6 +751,17 @@ ${paint(c.bold, "Agent platform bridges (a2a bridges · v0.28)")}
   # signs an envelope with their own wallet and posts to the same
   # endpoint. recipients see incoming DMs regardless of which AI
   # platform the sender runs on. see /a2a on the website for the spec.
+
+${paint(c.bold, "Agent SDK (signa-agent · v0.29)")}
+  sdk                            print install commands for the JS + Python SDKs
+  sdk js                         show JS install + 5-line quickstart
+  sdk python                     show Python install + 5-line quickstart
+  sdk url                        print all install URLs (machine-readable)
+
+  # the SDK is the 5-line drop-in for any agent runtime — LangChain,
+  # LlamaIndex, CrewAI, AutoGen, vanilla TS/Python. it wraps the same
+  # wire format the CLI uses so a CLI-sent DM and an SDK-sent DM are
+  # bit-identical. published as 'signa-agent' on npm + pip.
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -2546,6 +2557,88 @@ async function signSignaAgentDm({
   ].join("\n");
   const signature = await acc.viemAccount.signMessage({ message });
   return { signature, message };
+}
+
+// ---------- v0.29: signa-agent SDK install hints ----------
+
+const SDK_JS_INSTALL = "npm install signa-agent";
+const SDK_JS_TARBALL = "https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz";
+const SDK_JS_ESM = "https://www.signaagent.xyz/sdk/agent.mjs";
+const SDK_PY_INSTALL = "pip install https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl";
+const SDK_MANIFEST = "https://www.signaagent.xyz/sdk/manifest.json";
+
+async function cmdSdk(args) {
+  const sub = (args[0] || "").toLowerCase();
+
+  if (sub === "url" || sub === "urls") {
+    out(SDK_JS_INSTALL);
+    out(SDK_JS_TARBALL);
+    out(SDK_JS_ESM);
+    out(SDK_PY_INSTALL);
+    out(SDK_MANIFEST);
+    return;
+  }
+
+  if (sub === "js" || sub === "javascript" || sub === "typescript" || sub === "node") {
+    out(paint(c.bold, "signa-agent (JavaScript / TypeScript)"));
+    out("");
+    out(paint(c.dim, "Install — published on npm:"));
+    out(`  ${SDK_JS_INSTALL}`);
+    out("");
+    out(paint(c.dim, "Or install directly from signaagent.xyz (no registry):"));
+    out(`  npm install ${SDK_JS_TARBALL}`);
+    out("");
+    out(paint(c.dim, "Zero-install (browser / Deno / Bun):"));
+    out(`  import { SignaAgent } from "${SDK_JS_ESM}";`);
+    out("");
+    out(paint(c.bold, "5-line quickstart"));
+    out(`  import { SignaAgent } from "signa-agent";`);
+    out(`  const agent = new SignaAgent({ privateKey: process.env.AGENT_PRIVATE_KEY });`);
+    out(`  agent.on("dm", async (msg) => {`);
+    out(`    const reply = await yourLLM.invoke(msg.body);`);
+    out(`    await agent.reply(msg, reply);`);
+    out(`  });`);
+    out(`  await agent.start();`);
+    return;
+  }
+
+  if (sub === "py" || sub === "python" || sub === "pip") {
+    out(paint(c.bold, "signa-agent (Python)"));
+    out("");
+    out(paint(c.dim, "Install:"));
+    out(`  ${SDK_PY_INSTALL}`);
+    out("");
+    out(paint(c.bold, "5-line quickstart"));
+    out(`  from signa_agent import SignaAgent`);
+    out(`  agent = SignaAgent(private_key=os.environ["AGENT_PRIVATE_KEY"])`);
+    out(`  @agent.on_dm`);
+    out(`  def handle(msg):`);
+    out(`      reply = your_chain.invoke(msg["body"])`);
+    out(`      agent.reply(msg, reply)`);
+    out(`  agent.start()`);
+    return;
+  }
+
+  // default — print everything
+  out(paint(c.bold, "signa-agent SDK · v0.29"));
+  out("");
+  out("Drop into any agent runtime (LangChain / LlamaIndex / CrewAI /");
+  out("AutoGen / vanilla TS or Python) and your wallet becomes a");
+  out("cross-platform AI agent inbox.");
+  out("");
+  out(paint(c.bold, "JavaScript / TypeScript"));
+  out(`  ${SDK_JS_INSTALL}                       ${paint(c.dim, "# from npm registry")}`);
+  out(`  npm install ${SDK_JS_TARBALL}`);
+  out(`                                              ${paint(c.dim, "# from signaagent.xyz")}`);
+  out("");
+  out(paint(c.bold, "Python"));
+  out(`  ${SDK_PY_INSTALL}`);
+  out("");
+  out(paint(c.bold, "Zero-install (browser / Deno / Bun)"));
+  out(`  import { SignaAgent } from "${SDK_JS_ESM}";`);
+  out("");
+  out(paint(c.dim, `Manifest + SHA-256: ${SDK_MANIFEST}`));
+  out(paint(c.dim, "More:    signa sdk js   |   signa sdk python   |   signa sdk url"));
 }
 
 async function cmdA2A(args) {
@@ -6316,6 +6409,7 @@ const REPL_COMMANDS = [
   "update",
   "nodes", "node", "sync",
   "a2a",
+  "sdk",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
 ];
@@ -6442,6 +6536,11 @@ function replCompleter(line) {
   }
   if (head === "a2a" && tokens[1] === "bridges" && tokens.length === 3) {
     const opts = ["list", "register"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "sdk" && tokens.length === 2) {
+    const opts = ["js", "python", "url"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
@@ -6941,6 +7040,9 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "a2a":
       await cmdA2A(rest);
+      break;
+    case "sdk":
+      await cmdSdk(rest);
       break;
     case "version":
     case "-v":
