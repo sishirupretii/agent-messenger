@@ -15,6 +15,7 @@ import { getHolderStatus } from "@/lib/holder-status";
 import { AgentRespondWidget } from "@/components/agent/AgentRespondWidget";
 import { RunSimButton } from "@/components/agent/RunSimButton";
 import { BuildOnGitlawbButton } from "@/components/agent/BuildOnGitlawbButton";
+import { DmAgentPanel } from "@/components/agent/DmAgentPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -444,6 +445,15 @@ export default async function AgentProfilePage({
                 $ signa gitlawb build --agent {agent.address.slice(0, 10)}…
               </div>
               <BuildOnGitlawbButton
+                agentAddress={agent.address}
+                agentName={agent.name}
+              />
+            </div>
+            <div>
+              <div className="font-mono text-[11px] text-[var(--accent)] mb-3">
+                $ signa a2a send {agent.address.slice(0, 10)}… &quot;...&quot;
+              </div>
+              <DmAgentPanel
                 agentAddress={agent.address}
                 agentName={agent.name}
               />
