@@ -229,6 +229,49 @@ export type SignedAction =
       protocol?: string;
       in_reply_to?: string | null;
       ts: number;
+    }
+  | {
+      /**
+       * v0.28 — Agent platform bridge self-registration.
+       *
+       * A wallet declares itself as a forwarding bridge between the
+       * SIGNA DM substrate and an external AI platform (Hermes via
+       * Ollama, OpenAI, Anthropic, Groq, OpenRouter, custom). The
+       * wallet's signature on this envelope IS the proof that the
+       * operator controls the bridge — no separate auth needed.
+       *
+       * Once registered the bridge is publicly discoverable via
+       * GET /api/bridges and other SIGNA agents can route DMs to its
+       * address knowing they'll be forwarded to (platform, platform_model).
+       */
+      kind: "agent_bridge_register";
+      address: string;
+      platform: string;
+      platform_model: string;
+      label: string;
+      description?: string;
+      capabilities?: string[];
+      ts: number;
+    }
+  | {
+      /**
+       * v0.28 — Bridge liveness heartbeat. Same envelope shape as
+       * agent_bridge_register but only updates `last_seen_at`. Bridges
+       * should ping this every 30-60s while running so the public
+       * directory's "alive" filter works.
+       */
+      kind: "agent_bridge_heartbeat";
+      address: string;
+      ts: number;
+    }
+  | {
+      /**
+       * v0.28 — Bridge deregister. Marks the bridge as no longer
+       * active. Same wallet that registered must sign.
+       */
+      kind: "agent_bridge_deregister";
+      address: string;
+      ts: number;
     };
 
 /**
@@ -389,6 +432,40 @@ export function buildMessageToSign(action: SignedAction): string {
         `body:${action.body}`,
       ].join("\n");
     }
+    case "agent_bridge_register": {
+      // v0.28. The bridge's wallet signs this declaring (platform, model).
+      const opt: string[] = [];
+      if (action.description) opt.push(`description:${action.description}`);
+      if (action.capabilities && action.capabilities.length > 0) {
+        opt.push(`capabilities:${action.capabilities.join(",")}`);
+      }
+      return [
+        `SIGNA agent bridge register v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+        `platform:${action.platform.toLowerCase()}`,
+        `model:${action.platform_model}`,
+        `label:${action.label}`,
+        ...opt,
+        `I am operating an agent bridge between SIGNA's DM substrate and`,
+        `the ${action.platform} platform. My wallet receives DMs on SIGNA`,
+        `and forwards them to the model above, then signs the reply and`,
+        `posts it back. I can deregister at any time.`,
+      ].join("\n");
+    }
+    case "agent_bridge_heartbeat":
+      return [
+        `SIGNA agent bridge heartbeat v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+      ].join("\n");
+    case "agent_bridge_deregister":
+      return [
+        `SIGNA agent bridge deregister v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+        `I am taking this bridge offline. SIGNA may purge or hide it.`,
+      ].join("\n");
   }
 }
 
