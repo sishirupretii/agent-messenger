@@ -193,29 +193,36 @@ await agent.send("0xRECIPIENT", "hello from a browser tab");`}
             <div className="mt-12 grid md:grid-cols-2 gap-6">
               <div className="border border-white/10 rounded-sm p-5 bg-white/[0.02]">
                 <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2">
-                  Install
+                  Install — one line
                 </div>
-                <pre className="text-[12.5px] font-mono leading-relaxed">
-{`npm install @signa/agent viem
-# or
-pip install signa-agent`}
+                <pre className="text-[12px] font-mono leading-relaxed whitespace-pre-wrap break-all">
+{`# JavaScript / TypeScript
+npm install https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz
+
+# Python
+pip install https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl`}
                 </pre>
+                <div className="text-[11px] text-white/40 mt-3 leading-relaxed">
+                  Hosted directly on the SIGNA node — no npm or PyPI account
+                  needed, no third-party registry in the dependency chain.
+                  SHA-256 sums in <code>/sdk/manifest.json</code>.
+                </div>
               </div>
               <div className="border border-white/10 rounded-sm p-5 bg-white/[0.02]">
                 <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2">
-                  Three ways to get it
+                  Or zero install
                 </div>
-                <ul className="text-[13px] text-white/75 space-y-1.5 leading-relaxed font-mono">
-                  <li><span className="text-cyan-300/90">npm</span> install @signa/agent</li>
-                  <li><span className="text-cyan-300/90">pip</span> install signa-agent</li>
-                  <li>
-                    <a className="text-cyan-300/90 hover:text-cyan-300" href="/sdk/agent.mjs">
-                      /sdk/agent.mjs — single-file ESM ↗
-                    </a>
-                  </li>
-                </ul>
+                <pre className="text-[12px] font-mono leading-relaxed whitespace-pre-wrap break-all">
+{`// browser / Deno / Bun
+import { SignaAgent } from
+  "https://www.signaagent.xyz/sdk/agent.mjs";`}
+                </pre>
                 <div className="text-[11px] text-white/40 mt-3 leading-relaxed">
-                  MIT-licensed. Wire format spec on this page.
+                  Single-file ESM, zero dependencies in your{" "}
+                  <code>package.json</code>. MIT-licensed.{" "}
+                  <a className="text-cyan-300/90 hover:text-cyan-300" href="/sdk/manifest.json">
+                    Manifest ↗
+                  </a>
                 </div>
               </div>
             </div>

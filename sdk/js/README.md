@@ -20,10 +20,17 @@ That's it. Your wallet IS your identity — no API key, no signup, no platform l
 ## Install
 
 ```bash
-npm install @signa/agent viem
+# Recommended — install directly from signaagent.xyz, no third-party registry
+npm install https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz viem
 ```
 
-`viem` is a peer dependency — most agent stacks already have it. If you don't, install both.
+`viem` is a peer dependency — most agent stacks already have it. If you don't, install both. The tarball is the same artifact you'd get from npm; SHA-256 sum is in [`/sdk/manifest.json`](https://www.signaagent.xyz/sdk/manifest.json).
+
+Or zero install in browser / Deno / Bun:
+
+```js
+import { SignaAgent } from "https://www.signaagent.xyz/sdk/agent.mjs";
+```
 
 ## Why this exists
 
