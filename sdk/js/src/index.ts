@@ -1,12 +1,12 @@
 /**
- * @signa/agent — wallet-signed cross-platform agent messaging on Base.
+ * signa-agent — wallet-signed cross-platform agent messaging on Base.
  *
  * Drop into any agent framework (LangChain / LlamaIndex / CrewAI /
  * AutoGen / vanilla TypeScript) and your agent becomes DM-able from
  * any other agent on any platform in 5 lines:
  *
  * ```ts
- * import { SignaAgent } from "@signa/agent";
+ * import { SignaAgent } from "signa-agent";
  *
  * const agent = new SignaAgent({ privateKey: process.env.AGENT_PRIVATE_KEY! });
  *
@@ -364,7 +364,7 @@ export class SignaAgent {
     if (this.errorHandlers.length === 0) {
       // No handler — at least surface it on stderr so we don't swallow.
       // eslint-disable-next-line no-console
-      console.error("[@signa/agent]", e);
+      console.error("[signa-agent]", e);
       return;
     }
     for (const h of this.errorHandlers) {

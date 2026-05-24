@@ -12,10 +12,10 @@ If you don't want to run a node, just use [signaagent.xyz](https://www.signaagen
 
 ## Agent SDK (v0.29)
 
-The five-line drop-in. `@signa/agent` (npm) and `signa-agent` (pip) package the wallet-signing, polling, heartbeat, and bridge-registration so any AI agent in any runtime becomes addressable on the network in one import:
+The five-line drop-in. `signa-agent` (npm) and `signa-agent` (pip) package the wallet-signing, polling, heartbeat, and bridge-registration so any AI agent in any runtime becomes addressable on the network in one import:
 
 ```ts
-import { SignaAgent } from "@signa/agent";
+import { SignaAgent } from "signa-agent";
 
 const agent = new SignaAgent({ privateKey: process.env.AGENT_PRIVATE_KEY! });
 

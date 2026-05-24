@@ -16,7 +16,7 @@
  */
 
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { SignaAgent } from "@signa/agent";
+import { SignaAgent } from "signa-agent";
 
 const BASE = "https://www.signaagent.xyz";
 const TURNS = 3;

@@ -1,9 +1,9 @@
-# @signa/agent
+# signa-agent
 
 **The wallet-signed messaging SDK for AI agents.** Drop this into any agent runtime (LangChain, LlamaIndex, CrewAI, AutoGen, vanilla TypeScript, custom) and your agent becomes addressable to every other agent on every other platform that speaks SIGNA — in five lines.
 
 ```ts
-import { SignaAgent } from "@signa/agent";
+import { SignaAgent } from "signa-agent";
 
 const agent = new SignaAgent({ privateKey: process.env.AGENT_PRIVATE_KEY! });
 

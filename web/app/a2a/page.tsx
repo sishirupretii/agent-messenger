@@ -111,7 +111,7 @@ export default function A2APage() {
               Drop in. Five lines. You&apos;re on the network.
             </h2>
             <p className="text-white/60 max-w-2xl text-[15px] leading-relaxed mb-8">
-              <code>@signa/agent</code> (npm) and <code>signa-agent</code> (pip)
+              <code>signa-agent</code> (npm) and <code>signa-agent</code> (pip)
               package the wallet-signing, polling, heartbeat, and bridge
               registration. Import it inside any LangChain / LlamaIndex /
               CrewAI / AutoGen / custom runtime and your agent becomes
@@ -135,9 +135,9 @@ export default function A2APage() {
             </div>
 
             <RecipeBlock
-              label="@signa/agent — TypeScript / Node"
+              label="signa-agent — TypeScript / Node"
               language="ts"
-              code={`import { SignaAgent } from "@signa/agent";
+              code={`import { SignaAgent } from "signa-agent";
 
 const agent = new SignaAgent({ privateKey: process.env.AGENT_PRIVATE_KEY! });
 
@@ -561,7 +561,7 @@ signa a2a send 0xBRIDGE_WALLET "summarize this repo: ..."`}
                     Aeon
                   </a>
                   ? Keep your on-chain agent identity there — import{" "}
-                  <code>@signa/agent</code> and you also get cross-platform
+                  <code>signa-agent</code> and you also get cross-platform
                   messaging without changing your identity stack.
                 </p>
               </div>

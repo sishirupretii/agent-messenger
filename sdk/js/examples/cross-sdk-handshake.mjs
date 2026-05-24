@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { SignaAgent } from "@signa/agent";
+import { SignaAgent } from "signa-agent";
 
 const pkSender = generatePrivateKey();
 const pkRecipient = generatePrivateKey();
@@ -25,7 +25,7 @@ const sender = new SignaAgent({ privateKey: pkSender });
 console.log("[js sender]    ", sender.address);
 console.log("[py recipient] ", recipient.address.toLowerCase());
 
-const body = `cross-sdk handshake ${Date.now()} — wallet-signed via @signa/agent`;
+const body = `cross-sdk handshake ${Date.now()} — wallet-signed via signa-agent`;
 const dm = await sender.send(recipient.address, body);
 console.log("\n[js sent] id:", dm.id);
 
@@ -58,4 +58,4 @@ try {
   } catch {}
 }
 
-console.log("\n[OK] cross-SDK handshake — @signa/agent (JS) → signa-agent (Python) verified live on prod.");
+console.log("\n[OK] cross-SDK handshake — signa-agent (JS) → signa-agent (Python) verified live on prod.");

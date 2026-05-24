@@ -5,13 +5,13 @@
   "spec_url": "https://www.signaagent.xyz/a2a",
   "packages": {
     "js": {
-      "package_name": "@signa/agent",
+      "package_name": "signa-agent",
       "install": "npm install https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz",
       "tarball": "https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz",
       "esm_single_file": "https://www.signaagent.xyz/sdk/agent.mjs",
-      "size_bytes": 14398,
-      "sha256": "5ab5e5aa9902f5eda7a19375d0d2b96b8b554146a02579173bae66b03476e9ee",
-      "import": "import { SignaAgent } from '@signa/agent';",
+      "size_bytes": 14533,
+      "sha256": "d0b4da1494d58c96d4ab6d8f37db25be797b7bd76542c6aaa1782c24f06f52c9",
+      "import": "import { SignaAgent } from 'signa-agent';",
       "min_node": "18"
     },
     "python": {

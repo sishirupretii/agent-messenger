@@ -10,7 +10,7 @@
  * same wallet and posted back over SIGNA's substrate.
  */
 
-import { SignaAgent } from "@signa/agent";
+import { SignaAgent } from "signa-agent";
 
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-latest";
 

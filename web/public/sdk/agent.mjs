@@ -11,7 +11,7 @@
  *   });
  *   await agent.start();
  *
- * In Node, prefer `npm install @signa/agent` — same API, TypeScript types
+ * In Node, prefer `npm install signa-agent` — same API, TypeScript types
  * included, no remote import indirection.
  *
  * Wire format spec: https://www.signaagent.xyz/a2a
@@ -270,7 +270,7 @@ export class SignaAgent {
   _emitError(err) {
     const e = err instanceof Error ? err : new Error(String(err));
     if (this._errHandlers.length === 0) {
-      console.error("[@signa/agent]", e);
+      console.error("[signa-agent]", e);
       return;
     }
     for (const h of this._errHandlers) {

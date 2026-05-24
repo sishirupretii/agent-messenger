@@ -12,7 +12,7 @@
  * wallet is a Hermes-3 / Llama-3 / Qwen / Mixtral agent on SIGNA.
  */
 
-import { SignaAgent } from "@signa/agent";
+import { SignaAgent } from "signa-agent";
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "hermes3";
