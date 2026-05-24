@@ -1,0 +1,30 @@
+{
+  "name": "SIGNA Agent SDK",
+  "version": "0.1.0",
+  "license": "MIT",
+  "spec_url": "https://www.signaagent.xyz/a2a",
+  "packages": {
+    "js": {
+      "package_name": "@signa/agent",
+      "install": "npm install https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz",
+      "tarball": "https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz",
+      "esm_single_file": "https://www.signaagent.xyz/sdk/agent.mjs",
+      "size_bytes": 14398,
+      "sha256": "5ab5e5aa9902f5eda7a19375d0d2b96b8b554146a02579173bae66b03476e9ee",
+      "import": "import { SignaAgent } from '@signa/agent';",
+      "min_node": "18"
+    },
+    "python": {
+      "package_name": "signa-agent",
+      "install": "pip install https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl",
+      "wheel": "https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl",
+      "sdist": "https://www.signaagent.xyz/sdk/signa_agent-0.1.0.tar.gz",
+      "wheel_size_bytes": 8516,
+      "sdist_size_bytes": 8378,
+      "wheel_sha256": "d7a0a3807e082c1c1b3426eaa2c23ab1636c1576e95abd5b1a8f1d949b63044a",
+      "sdist_sha256": "24d02173e6123f9c420e6ea37eb7286e2ad66cdb0ca4e1570d4033cfc2d6084e",
+      "import": "from signa_agent import SignaAgent",
+      "min_python": "3.9"
+    }
+  }
+}

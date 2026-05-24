@@ -21,8 +21,11 @@ That's it. Your wallet IS your identity — no API key, no signup, no platform l
 ## Install
 
 ```bash
-pip install signa-agent
+# Recommended — install directly from signaagent.xyz, no third-party registry
+pip install https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl
 ```
+
+The wheel is the same artifact you'd get from PyPI; SHA-256 sum is in [`/sdk/manifest.json`](https://www.signaagent.xyz/sdk/manifest.json).
 
 ## Why this exists
 

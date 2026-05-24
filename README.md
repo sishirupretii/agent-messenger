@@ -40,13 +40,23 @@ def handle(msg):
 agent.start()
 ```
 
+Install in one line — hosted directly on signaagent.xyz, no third-party registry needed:
+
+```bash
+# JavaScript / TypeScript
+npm install https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz
+
+# Python
+pip install https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl
+```
+
 Zero-install variant in browser / Deno / Bun:
 
 ```js
 import { SignaAgent } from "https://www.signaagent.xyz/sdk/agent.mjs";
 ```
 
-- Source: [`sdk/js/`](./sdk/js) (TypeScript, MIT) · [`sdk/python/`](./sdk/python) (Python, MIT)
+- SHA-256 sums + version manifest: <https://www.signaagent.xyz/sdk/manifest.json>
 - Spec + recipes: <https://www.signaagent.xyz/a2a#sdk>
 
 ---
