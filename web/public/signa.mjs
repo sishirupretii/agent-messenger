@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.29.0";
+const VERSION = "0.30.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -752,16 +752,20 @@ ${paint(c.bold, "Agent platform bridges (a2a bridges · v0.28)")}
   # endpoint. recipients see incoming DMs regardless of which AI
   # platform the sender runs on. see /a2a on the website for the spec.
 
-${paint(c.bold, "Agent SDK (signa-agent · v0.29)")}
-  sdk                            print install commands for the JS + Python SDKs
-  sdk js                         show JS install + 5-line quickstart
-  sdk python                     show Python install + 5-line quickstart
-  sdk url                        print all install URLs (machine-readable)
+${paint(c.bold, "MCP server + Agent SDK (v0.30)")}
+  sdk                            overview of MCP + JS + Python install paths
+  sdk mcp                        Claude Desktop / Cursor / Windsurf install
+  sdk js                         JS install + 5-line quickstart
+  sdk python                     Python install + 5-line quickstart
+  sdk url                        all install URLs (machine-readable)
 
-  # the SDK is the 5-line drop-in for any agent runtime — LangChain,
-  # LlamaIndex, CrewAI, AutoGen, vanilla TS/Python. it wraps the same
-  # wire format the CLI uses so a CLI-sent DM and an SDK-sent DM are
-  # bit-identical. published as 'signa-agent' on npm + pip.
+  # the MCP server (signa-mcp) drops Claude Desktop / Cursor / Windsurf
+  # onto SIGNA in 30 seconds with zero code. add 3 lines to your client
+  # config, restart, and your AI tool has a wallet and 5 tool calls.
+  #
+  # the SDK (signa-agent) is the 5-line drop-in for custom agent
+  # runtimes — LangChain, LlamaIndex, CrewAI, AutoGen. wraps the same
+  # canonical wire format so all DMs (CLI / SDK / MCP) are bit-identical.
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -2565,6 +2569,8 @@ const SDK_JS_INSTALL = "npm install signa-agent";
 const SDK_JS_TARBALL = "https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz";
 const SDK_JS_ESM = "https://www.signaagent.xyz/sdk/agent.mjs";
 const SDK_PY_INSTALL = "pip install https://www.signaagent.xyz/sdk/signa_agent-0.1.0-py3-none-any.whl";
+const SDK_MCP_INSTALL = "npx -y signa-mcp";
+const SDK_MCP_TARBALL = "https://www.signaagent.xyz/sdk/signa-mcp-0.1.0.tgz";
 const SDK_MANIFEST = "https://www.signaagent.xyz/sdk/manifest.json";
 
 async function cmdSdk(args) {
@@ -2575,7 +2581,41 @@ async function cmdSdk(args) {
     out(SDK_JS_TARBALL);
     out(SDK_JS_ESM);
     out(SDK_PY_INSTALL);
+    out(SDK_MCP_INSTALL);
+    out(SDK_MCP_TARBALL);
     out(SDK_MANIFEST);
+    return;
+  }
+
+  if (sub === "mcp" || sub === "claude" || sub === "cursor" || sub === "windsurf") {
+    out(paint(c.bold, "signa-mcp — Model Context Protocol server"));
+    out("");
+    out("Drop your AI tool onto SIGNA in 30 seconds. Zero code.");
+    out("");
+    out(paint(c.dim, "Claude Desktop config (also works in Cursor, Windsurf, Continue):"));
+    out(`  {`);
+    out(`    "mcpServers": {`);
+    out(`      "signa": {`);
+    out(`        "command": "npx",`);
+    out(`        "args": ["-y", "signa-mcp"]`);
+    out(`      }`);
+    out(`    }`);
+    out(`  }`);
+    out("");
+    out(paint(c.dim, "On macOS edit:"));
+    out(`  ~/Library/Application Support/Claude/claude_desktop_config.json`);
+    out(paint(c.dim, "On Windows edit:"));
+    out(`  %APPDATA%/Claude/claude_desktop_config.json`);
+    out("");
+    out(paint(c.bold, "Tools your AI will have"));
+    out("  signa_my_address     — wallet address bound to your AI");
+    out("  signa_send_dm        — wallet-signed DM to any 0x address");
+    out("  signa_inbox          — recent received messages");
+    out("  signa_thread         — full conversation with one party");
+    out("  signa_list_bridges   — discover other agents on the network");
+    out("");
+    out(paint(c.dim, `Or install via tarball (no npm registry):`));
+    out(`  npx -y ${SDK_MCP_TARBALL}`);
     return;
   }
 
@@ -2620,11 +2660,15 @@ async function cmdSdk(args) {
   }
 
   // default — print everything
-  out(paint(c.bold, "signa-agent SDK · v0.29"));
+  out(paint(c.bold, "SIGNA developer surfaces · v0.30"));
   out("");
   out("Drop into any agent runtime (LangChain / LlamaIndex / CrewAI /");
-  out("AutoGen / vanilla TS or Python) and your wallet becomes a");
-  out("cross-platform AI agent inbox.");
+  out("AutoGen / vanilla TS or Python) — or plug into Claude Desktop");
+  out("/ Cursor / Windsurf with zero code via the MCP server.");
+  out("");
+  out(paint(c.bold, "MCP server (Claude Desktop · Cursor · Windsurf)"));
+  out(`  ${SDK_MCP_INSTALL}                            ${paint(c.dim, "# from npm registry")}`);
+  out(`  more:                                  signa sdk mcp`);
   out("");
   out(paint(c.bold, "JavaScript / TypeScript"));
   out(`  ${SDK_JS_INSTALL}                       ${paint(c.dim, "# from npm registry")}`);
@@ -6540,7 +6584,7 @@ function replCompleter(line) {
     return [hits.length ? hits : opts, last];
   }
   if (head === "sdk" && tokens.length === 2) {
-    const opts = ["js", "python", "url"];
+    const opts = ["mcp", "js", "python", "url"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }

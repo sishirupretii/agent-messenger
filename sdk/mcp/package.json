@@ -1,0 +1,49 @@
+{
+  "name": "signa-mcp",
+  "version": "0.1.0",
+  "description": "SIGNA Model Context Protocol server. Drop into Claude Desktop, Cursor, Windsurf, or any MCP-compatible client and your AI tool gets a wallet on SIGNA — instantly addressable from every other AI agent on the network. Three lines of config, zero code.",
+  "type": "module",
+  "bin": {
+    "signa-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "signa",
+    "agent",
+    "ai-agent",
+    "claude-desktop",
+    "cursor",
+    "windsurf",
+    "wallet",
+    "messaging",
+    "a2a",
+    "ethereum",
+    "base",
+    "decentralized"
+  ],
+  "license": "MIT",
+  "homepage": "https://www.signaagent.xyz/a2a#mcp",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "signa-agent": "^0.1.0",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
