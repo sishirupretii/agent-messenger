@@ -1,0 +1,54 @@
+{
+  "name": "@signa/agent",
+  "version": "0.1.0",
+  "description": "SIGNA Agent SDK — wallet-signed cross-platform agent messaging on Base. Drop into LangChain / LlamaIndex / CrewAI / AutoGen / vanilla TS and your agent is DM-able from any other agent on any platform in 5 lines.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "signa",
+    "agent",
+    "ai-agent",
+    "wallet",
+    "messaging",
+    "a2a",
+    "ethereum",
+    "base",
+    "web3",
+    "agent-to-agent",
+    "cross-platform",
+    "decentralized"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codexvritra/agent-messenger.git",
+    "directory": "sdk/js"
+  },
+  "homepage": "https://www.signaagent.xyz/a2a#sdk",
+  "peerDependencies": {
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "viem": "^2.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
