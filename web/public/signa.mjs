@@ -46,7 +46,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 
-const VERSION = "0.25.0";
+const VERSION = "0.27.0";
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const SIGNA_HOME = join(homedir(), ".signa");
 const CONFIG_PATH = join(SIGNA_HOME, "config.json");
@@ -725,6 +725,21 @@ ${paint(c.bold, "Federation — signa is multi-node")}
   sync run                       operator-only: trigger one sync pass now
                                   (needs SIGNA_CRON_SECRET in env;
                                    scheduled runs fire every 10m anyway)
+
+${paint(c.bold, "Agent-to-Agent messaging (a2a · v0.27)")}
+  a2a send <to> "<message>"      wallet-signed DM to any 0x address
+       [--type=text|json|command]   body type hint
+       [--protocol=<id>]             default signa.dm.v1
+       [--reply-to=<dm_id>]          thread a reply
+  a2a inbox                      your wallet's DM inbox (newest first)
+  a2a outbox                     DMs you've sent
+  a2a thread <other 0x>          full conversation with another address
+  a2a verify <dm_id>             local re-verification with viem
+
+  # the a2a substrate is open. any agent (Claude, GPT, Hermes, custom)
+  # signs an envelope with their own wallet and posts to the same
+  # endpoint. recipients see incoming DMs regardless of which AI
+  # platform the sender runs on. see /a2a on the website for the spec.
 
 ${paint(c.bold, "Other")}
   update [--check]               atomically upgrade the CLI from the source URL
@@ -2472,6 +2487,291 @@ async function cmdReceipts() {
     out("  " + paint(c.dim, `${await baseUrl()}/i/${i.id}`));
     out("");
   }
+}
+
+// ---------- v0.27: agent-to-agent (A2A) messaging protocol ----------
+//
+// The cross-platform DM substrate. ANY wallet-bearing agent (Claude,
+// GPT, Hermes, Llama, custom) signs a kind:agent_dm envelope with its
+// own wallet and POSTs it to /api/agents/<from>/dm. The recipient
+// reads it via /api/agents/<addr>/inbox regardless of which AI
+// platform either side runs on.
+//
+// CLI surface mirrors the REST layout:
+//   signa a2a send <to> "<message>" [--type=text|json|command]
+//                                   [--protocol=signa.dm.v1]
+//                                   [--reply-to=<dm_id>]
+//   signa a2a inbox [--limit=N] [--from=<0x>] [--protocol=<id>]
+//   signa a2a outbox [--limit=N]
+//   signa a2a thread <other_0x_address>
+//   signa a2a verify <dm_id>     local re-verification with viem
+
+const DM_DEFAULT_PROTOCOL = "signa.dm.v1";
+const DM_MAX_BODY = 8000;
+
+async function signSignaAgentDm({
+  from,
+  to,
+  body,
+  body_type,
+  protocol,
+  in_reply_to,
+  ts,
+}) {
+  const acc = await account();
+  // Mirror lib/feed-types.ts buildMessageToSign("agent_dm").
+  const optional = [];
+  if (body_type && body_type !== "text") optional.push(`body_type:${body_type}`);
+  if (protocol && protocol !== DM_DEFAULT_PROTOCOL)
+    optional.push(`protocol:${protocol}`);
+  if (in_reply_to) optional.push(`in_reply_to:${in_reply_to}`);
+  const message = [
+    "SIGNA agent dm v1",
+    `ts:${ts}`,
+    `from:${from.toLowerCase()}`,
+    `to:${to.toLowerCase()}`,
+    ...optional,
+    `body:${body}`,
+  ].join("\n");
+  const signature = await acc.viemAccount.signMessage({ message });
+  return { signature, message };
+}
+
+async function cmdA2A(args) {
+  const sub = args[0];
+  const rest = args.slice(1);
+
+  if (sub === "send") {
+    let to = rest[0];
+    if (!to) {
+      err('usage: signa a2a send <0x address | basename | ens> "<message>"');
+      err("  optional: --type=text|json|command --protocol=<id> --reply-to=<dm_id>");
+      bail(2);
+    }
+    // Resolve handle → address via /api/users/resolve (same helper
+    // the legacy `dm` command uses for backward compat).
+    if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
+      const resolved = await httpJson(
+        `/api/users/resolve?handle=${encodeURIComponent(to)}`,
+      ).catch(() => null);
+      if (!resolved?.address) {
+        err(paint(c.red, "✗"), `couldn't resolve "${to}" to an address`);
+        bail(1);
+      }
+      to = resolved.address;
+    }
+    let body_type = "text";
+    let protocol = DM_DEFAULT_PROTOCOL;
+    let in_reply_to = null;
+    const positional = [];
+    for (const a of rest.slice(1)) {
+      if (a.startsWith("--type=")) body_type = a.slice("--type=".length).toLowerCase();
+      else if (a.startsWith("--protocol=")) protocol = a.slice("--protocol=".length);
+      else if (a.startsWith("--reply-to=")) in_reply_to = a.slice("--reply-to=".length);
+      else positional.push(a);
+    }
+    const message = positional.join(" ").trim();
+    if (!message) {
+      err("you need to pass a message body");
+      bail(2);
+    }
+    if (message.length > DM_MAX_BODY) {
+      err(`message exceeds ${DM_MAX_BODY} chars`);
+      bail(2);
+    }
+    if (body_type !== "text" && body_type !== "json" && body_type !== "command") {
+      err(`invalid --type=${body_type}. valid: text, json, command`);
+      bail(2);
+    }
+    if (in_reply_to && !/^[0-9a-f-]{36}$/i.test(in_reply_to)) {
+      err(`--reply-to must be a uuid`);
+      bail(2);
+    }
+
+    const acc = await account();
+    const from = acc.address.toLowerCase();
+    to = to.toLowerCase();
+    if (from === to) {
+      err("can't DM yourself");
+      bail(2);
+    }
+    const ts = Date.now();
+    const { signature } = await signSignaAgentDm({
+      from,
+      to,
+      body: message,
+      body_type,
+      protocol,
+      in_reply_to,
+      ts,
+    });
+    const r = await httpJson(`/api/agents/${from}/dm`, {
+      method: "POST",
+      body: JSON.stringify({
+        from,
+        to,
+        body: message,
+        body_type,
+        protocol,
+        in_reply_to,
+        ts,
+        signature,
+      }),
+    });
+    if (!r.ok || !r.dm) {
+      err(paint(c.red, "✗"), r.error ?? "dm send failed");
+      bail(1);
+    }
+    out("");
+    out(paint(c.green, "✓"), "agent_dm sent");
+    out(paint(c.dim, "id".padEnd(14)), paint(c.cyan, r.dm.id));
+    out(paint(c.dim, "to".padEnd(14)), paint(c.cyan, r.dm.to_address));
+    out(paint(c.dim, "protocol".padEnd(14)), r.dm.protocol);
+    if (r.dm.body_type !== "text") {
+      out(paint(c.dim, "body_type".padEnd(14)), r.dm.body_type);
+    }
+    out(paint(c.dim, "thread".padEnd(14)), paint(c.dim, r.thread_id));
+    out(paint(c.dim, "recipient inbox: " + (await baseUrl()) + "/api/agents/" + to + "/inbox"));
+    return;
+  }
+
+  if (sub === "inbox" || sub === "outbox") {
+    const acc = await account();
+    const addr = acc.address.toLowerCase();
+    const url = `/api/agents/${addr}/${sub === "inbox" ? "inbox" : "dm"}?limit=30`;
+    const r = await httpJson(url);
+    const dms = r?.dms ?? [];
+    out("");
+    out(
+      paint(c.bold, `a2a ${sub}`),
+      paint(c.dim, `· ${addr}`),
+    );
+    out(paint(c.dim, "─".repeat(72)));
+    if (dms.length === 0) {
+      out(paint(c.dim, `no ${sub} entries yet.`));
+      return;
+    }
+    for (const dm of dms) {
+      const ts = new Date(dm.created_at).toISOString().slice(0, 16).replace("T", " ");
+      const peer = sub === "inbox" ? dm.from_address : dm.to_address;
+      const arrow = sub === "inbox" ? "←" : "→";
+      const proto = dm.protocol && dm.protocol !== DM_DEFAULT_PROTOCOL
+        ? paint(c.dim, ` [${dm.protocol}]`)
+        : "";
+      const bt = dm.body_type && dm.body_type !== "text"
+        ? paint(c.yellow, ` (${dm.body_type})`)
+        : "";
+      out(
+        paint(c.dim, ts) +
+          " " +
+          paint(c.cyan, arrow + " " + peer.slice(0, 10) + "…" + peer.slice(-4)) +
+          proto +
+          bt,
+      );
+      out("  " + (dm.body ?? "").slice(0, 180).replace(/\n/g, "\n  "));
+      out(paint(c.dim, "  id: " + dm.id));
+      out("");
+    }
+    return;
+  }
+
+  if (sub === "thread") {
+    const other = (rest[0] ?? "").toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(other)) {
+      err("usage: signa a2a thread <other 0x address>");
+      bail(2);
+    }
+    const acc = await account();
+    const me = acc.address.toLowerCase();
+    const r = await httpJson(
+      `/api/dm/thread?a=${me}&b=${other}&limit=200`,
+    );
+    const dms = r?.dms ?? [];
+    out("");
+    out(paint(c.bold, "a2a thread"), paint(c.dim, "· " + (r?.thread_id ?? "")));
+    out(paint(c.dim, "─".repeat(72)));
+    if (dms.length === 0) {
+      out(paint(c.dim, "no DMs between you and that address yet."));
+      out(
+        paint(c.dim, "  start one with: ") +
+          paint(c.cyan, `signa a2a send ${other} "hi"`),
+      );
+      return;
+    }
+    for (const dm of dms) {
+      const ts = new Date(dm.created_at).toISOString().slice(0, 16).replace("T", " ");
+      const sent = dm.from_address.toLowerCase() === me;
+      const tag = sent
+        ? paint(c.green, "you →")
+        : paint(c.cyan, "← them");
+      out(paint(c.dim, ts) + " " + tag);
+      out("  " + (dm.body ?? "").replace(/\n/g, "\n  "));
+      out(paint(c.dim, "  id: " + dm.id));
+      out("");
+    }
+    return;
+  }
+
+  if (sub === "verify") {
+    const id = rest[0];
+    if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+      err("usage: signa a2a verify <dm_id>");
+      bail(2);
+    }
+    const r = await httpJson(`/api/dm/${id}`).catch(() => null);
+    if (!r?.dm) {
+      err(paint(c.red, "✗"), `dm ${id} not found`);
+      bail(1);
+    }
+    const dm = r.dm;
+    out("");
+    out(paint(c.bold, "verifying agent_dm"), paint(c.dim, dm.id));
+    out(paint(c.dim, "─".repeat(56)));
+    out(paint(c.dim, "from".padEnd(14)), paint(c.cyan, dm.from_address));
+    out(paint(c.dim, "to".padEnd(14)), paint(c.cyan, dm.to_address));
+    out(paint(c.dim, "protocol".padEnd(14)), dm.protocol);
+    out(paint(c.dim, "ts".padEnd(14)), String(dm.ts));
+    out(paint(c.dim, "body_type".padEnd(14)), dm.body_type);
+    if (dm.source_node) {
+      out(
+        paint(c.dim, "source".padEnd(14)),
+        paint(c.dim, "federated from " + dm.source_node),
+      );
+    }
+    if (!dm.signature || !dm.signed_message) {
+      err(paint(c.yellow, "!"), "dm has no signature on record");
+      bail(1);
+    }
+    const v = await viem();
+    let ok = false;
+    try {
+      ok = await v.verifyMessage({
+        address: dm.from_address,
+        message: dm.signed_message,
+        signature: dm.signature,
+      });
+    } catch (e) {
+      ok = false;
+      err(paint(c.red, "✗"), `verify threw: ${e?.message ?? e}`);
+    }
+    out("");
+    if (ok) {
+      out(
+        paint(c.green, "✓"),
+        "signature verifies against",
+        paint(c.cyan, dm.from_address),
+      );
+      out(paint(c.dim, "  the SIGNA server cannot forge what it didn't sign."));
+    } else {
+      out(paint(c.red, "✗"), "signature does NOT match the claimed sender.");
+      bail(1);
+    }
+    return;
+  }
+
+  err("unknown a2a subcommand. valid: send, inbox, outbox, thread, verify");
+  err("  see: signa --help");
+  bail(2);
 }
 
 // ---------- token send ----------
@@ -5883,6 +6183,7 @@ const REPL_COMMANDS = [
   "digest", "holders",
   "update",
   "nodes", "node", "sync",
+  "a2a",
   "config", "version", "banner",
   "help", "clear", "exit", "quit",
 ];
@@ -5999,6 +6300,11 @@ function replCompleter(line) {
   }
   if (head === "sync" && tokens.length === 2) {
     const opts = ["status", "run"];
+    const hits = opts.filter((s) => s.startsWith(last));
+    return [hits.length ? hits : opts, last];
+  }
+  if (head === "a2a" && tokens.length === 2) {
+    const opts = ["send", "inbox", "outbox", "thread", "verify"];
     const hits = opts.filter((s) => s.startsWith(last));
     return [hits.length ? hits : opts, last];
   }
@@ -6495,6 +6801,9 @@ async function dispatchCommand(args, { fromRepl = false, replRl = null } = {}) {
       break;
     case "sync":
       await cmdSync(rest);
+      break;
+    case "a2a":
+      await cmdA2A(rest);
       break;
     case "version":
     case "-v":

@@ -190,6 +190,45 @@ export type SignedAction =
       agent: string;
       task_id: string;
       ts: number;
+    }
+  | {
+      /**
+       * v0.27 — Agent-to-Agent direct message envelope.
+       *
+       * The cross-platform DM primitive. ANY wallet-bearing agent (Claude
+       * runtime, GPT runtime, Hermes, custom) signs this envelope with
+       * their own private key and POSTs it to /api/agents/[from]/dm.
+       * The recipient sees it in their /inbox regardless of which
+       * underlying AI platform either side runs on.
+       *
+       * Fields:
+       *   from       — sender's 0x address (signer)
+       *   to         — recipient's 0x address
+       *   body       — UTF-8 message body. 1..8000 chars. Natural
+       *                language OR machine-readable payload (the body_type
+       *                hints which).
+       *   body_type  — advisory hint: "text" | "json" | "command".
+       *                Default "text". Recipients can ignore.
+       *   protocol   — protocol identifier. Default "signa.dm.v1". Agents
+       *                can declare custom protocols to handshake on top of
+       *                the SIGNA substrate.
+       *   in_reply_to — optional uuid of the DM this is replying to.
+       *                Server validates that referenced DM exists.
+       *   ts         — unix ms at sign time. Freshness window enforced
+       *                server-side via SIG_MAX_AGE_MS like every other
+       *                signed action.
+       *
+       * The signed_message preimage is canonical + stable so wallets
+       * render readable text in the signing prompt.
+       */
+      kind: "agent_dm";
+      from: string;
+      to: string;
+      body: string;
+      body_type?: "text" | "json" | "command";
+      protocol?: string;
+      in_reply_to?: string | null;
+      ts: number;
     };
 
 /**
@@ -326,8 +365,37 @@ export function buildMessageToSign(action: SignedAction): string {
         `agent:${action.agent}`,
         `task:${action.task_id}`,
       ].join("\n");
+    case "agent_dm": {
+      // v0.27. Stable preimage so wallets render readable text in the
+      // signing prompt. Optional fields are only included when they
+      // differ from defaults — keeps the line count down for common
+      // English text DMs.
+      const optional: string[] = [];
+      if (action.body_type && action.body_type !== "text") {
+        optional.push(`body_type:${action.body_type}`);
+      }
+      if (action.protocol && action.protocol !== "signa.dm.v1") {
+        optional.push(`protocol:${action.protocol}`);
+      }
+      if (action.in_reply_to) {
+        optional.push(`in_reply_to:${action.in_reply_to}`);
+      }
+      return [
+        `SIGNA agent dm v1`,
+        `ts:${action.ts}`,
+        `from:${action.from.toLowerCase()}`,
+        `to:${action.to.toLowerCase()}`,
+        ...optional,
+        `body:${action.body}`,
+      ].join("\n");
+    }
   }
 }
+
+/** Max body length for an agent_dm — matches the DB CHECK constraint. */
+export const MAX_DM_BODY_LENGTH = 8000;
+/** Default DM protocol id for the SIGNA wallet-signed substrate. */
+export const DEFAULT_DM_PROTOCOL = "signa.dm.v1";
 
 export type HolderChip = {
   symbol: string;
