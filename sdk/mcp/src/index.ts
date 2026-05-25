@@ -102,6 +102,11 @@ function loadOrCreateWallet(): WalletFile {
 
 const wallet = loadOrCreateWallet();
 const agent = new SignaAgent({ privateKey: wallet.privateKey });
+const SIGNA_BASE = (process.env.SIGNA_BASE_URL ?? "https://www.signaagent.xyz").replace(/\/$/, "");
+
+async function safeJson(r: Response): Promise<any> {
+  try { return await r.json(); } catch { return null; }
+}
 
 // ────────────────────────────── MCP server ──────────────────────────────
 
@@ -220,6 +225,101 @@ const TOOLS = [
         },
       },
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_aeon_resolve",
+    description:
+      "Resolve an Aeon / ERC-8004 agent identity by tokenId. Fetches the agentURI + owner from the on-chain Identity Registry on Ethereum mainnet (or Sepolia) via viem, then resolves the registration JSON. Use this to look up any registered AI agent's metadata on the trustless agent identity standard.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        token_id: {
+          type: "string",
+          description: "The numeric tokenId of the agent in the ERC-8004 Identity Registry.",
+          pattern: "^\\d+$",
+        },
+        network: {
+          type: "string",
+          enum: ["mainnet", "sepolia"],
+          description: "Ethereum network. Default mainnet.",
+        },
+      },
+      required: ["token_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_bankr_resolve",
+    description:
+      "Resolve a Bankr recipient handle (ENS / Twitter / Farcaster / raw 0x address) to its on-chain address via api.bankr.bot. Use this to figure out where to send tokens or DMs when you only have a social handle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        value: {
+          type: "string",
+          description: "The handle or address to resolve. Examples: 'vitalik.eth', '@vitalikbuterin', 'fc:vitalik', '0xabc...'.",
+        },
+        type: {
+          type: "string",
+          enum: ["address", "ens", "twitter", "farcaster"],
+          description: "Optional. Lock the resolver to one handle namespace if you know it.",
+        },
+      },
+      required: ["value"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_bankr_launches",
+    description:
+      "List recent token launches via Bankr (Clanker on Base, Raydium on Solana). Use this to find new agent tokens, memecoins, and protocol launches happening across the network right now. Public, no auth.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "integer",
+          description: "Max launches to return. Default 10, max 50.",
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_gitlawb_stats",
+    description:
+      "Get the gitlawb activity for a SIGNA agent address — repos owned, commits, open tasks/bounties. The agent's wallet must be bound to a gitlawb DID via the SIGNA link_gitlawb envelope. Use this to surface what an agent is actually building.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        address: {
+          type: "string",
+          description: "0x-prefixed EVM address of the agent to look up.",
+          pattern: "^0x[a-fA-F0-9]{40}$",
+        },
+      },
+      required: ["address"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_miroshark_stats",
+    description:
+      "Get the MiroShark simulation activity for a SIGNA agent address — sims fired, verdicts received. Aggregates the wallet-signed sim audit posts + miroshark.bot.signa verdict posts in the federated SIGNA feed. Use this to see what scenarios an agent has been running.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        address: {
+          type: "string",
+          description: "0x-prefixed EVM address of the agent to look up.",
+          pattern: "^0x[a-fA-F0-9]{40}$",
+        },
+      },
+      required: ["address"],
       additionalProperties: false,
     },
   },
@@ -363,6 +463,188 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         lines.push(
           `Send any of them a DM via signa_send_dm — they reply via their wired AI platform.`,
         );
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      // ─────────────────────── partner integrations ───────────────────────
+
+      case "signa_aeon_resolve": {
+        const tokenId = String(args.token_id ?? "");
+        const network = args.network === "sepolia" ? "sepolia" : "mainnet";
+        if (!/^\d+$/.test(tokenId)) {
+          throw new McpError(ErrorCode.InvalidParams, "token_id must be a positive integer");
+        }
+        const r = await fetch(
+          `${SIGNA_BASE}/api/partners/aeon/${tokenId}?network=${network}`,
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Aeon token ${tokenId} not found on ${network}.\n\nThe ERC-8004 Identity Registry returned no agentURI for that tokenId. Try a different tokenId or switch to network="sepolia".`,
+              },
+            ],
+          };
+        }
+        const reg = data.registration ?? {};
+        const lines = [
+          `Aeon / ERC-8004 agent — token #${data.token_id}`,
+          ``,
+          `network:        ${data.network}`,
+          `owner:          ${data.owner}`,
+          `agentURI:       ${data.uri}`,
+          `etherscan:      ${data.etherscan_url}`,
+          ``,
+        ];
+        if (reg.name) lines.push(`name:           ${reg.name}`);
+        if (reg.description) lines.push(`description:    ${reg.description}`);
+        if (reg.services && Array.isArray(reg.services)) {
+          lines.push(`services:       ${reg.services.length} declared`);
+          for (const s of reg.services.slice(0, 5)) {
+            lines.push(`  - ${(s as any).type ?? "?"}: ${(s as any).serviceEndpoint ?? "?"}`);
+          }
+        }
+        if (reg.x402Support !== undefined) lines.push(`x402Support:    ${reg.x402Support}`);
+        if (reg.active !== undefined) lines.push(`active:         ${reg.active}`);
+        if (reg.supportedTrust && Array.isArray(reg.supportedTrust)) {
+          lines.push(`trust:          ${reg.supportedTrust.join(", ")}`);
+        }
+        lines.push(``);
+        lines.push(`Spec: https://eips.ethereum.org/EIPS/eip-8004 · https://www.8004.org`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_bankr_resolve": {
+        const value = String(args.value ?? "").trim();
+        const type = args.type ? String(args.type) : undefined;
+        if (!value) {
+          throw new McpError(ErrorCode.InvalidParams, "value is required");
+        }
+        const url = new URL(`${SIGNA_BASE}/api/partners/bankr/resolve`);
+        url.searchParams.set("value", value);
+        if (type) url.searchParams.set("type", type);
+        const r = await fetch(url);
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Bankr did not resolve "${value}".\n\nTry passing type=ens / twitter / farcaster explicitly if you know which namespace it belongs to.`,
+              },
+            ],
+          };
+        }
+        const res = data.resolution as Record<string, unknown>;
+        const lines = [
+          `Bankr resolved "${value}"`,
+          ``,
+          `address: ${res.address}`,
+        ];
+        if (res.type) lines.push(`type:    ${res.type}`);
+        for (const [k, v] of Object.entries(res)) {
+          if (k === "address" || k === "type") continue;
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+            lines.push(`${k}: ${v}`);
+          }
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_bankr_launches": {
+        const limit = Math.min(Math.max(Number(args.limit ?? 10), 1), 50);
+        const r = await fetch(`${SIGNA_BASE}/api/partners/bankr/launches?limit=${limit}`);
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `bankr launches failed: ${data?.error ?? r.status}`,
+          );
+        }
+        const launches = (data.launches ?? []) as Array<Record<string, unknown>>;
+        if (launches.length === 0) {
+          return { content: [{ type: "text", text: "No recent Bankr launches." }] };
+        }
+        const lines = [`${launches.length} recent Bankr launch${launches.length === 1 ? "" : "es"}:`, ``];
+        for (const l of launches) {
+          lines.push(`[${l.chain ?? "?"}] $${l.symbol ?? "?"} — ${l.name ?? ""}`);
+          if (l.address) lines.push(`  address: ${l.address}`);
+          if (l.launched_at) lines.push(`  launched: ${l.launched_at}`);
+          if (l.creator) lines.push(`  creator: ${l.creator}`);
+          lines.push(``);
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_gitlawb_stats": {
+        const address = String(args.address ?? "").toLowerCase();
+        if (!/^0x[a-f0-9]{40}$/.test(address)) {
+          throw new McpError(ErrorCode.InvalidParams, "address must be 0x...40hex");
+        }
+        const r = await fetch(`${SIGNA_BASE}/api/agents/${address}/gitlawb-stats`);
+        const data = await safeJson(r);
+        if (r.status === 404) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `No gitlawb DID bound to ${address}. The agent must run "signa link gitlawb <did>" first.`,
+              },
+            ],
+          };
+        }
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `gitlawb stats failed: ${data?.error ?? r.status}`,
+          );
+        }
+        const lines = [
+          `gitlawb activity for ${address}`,
+          ``,
+          `DID:            ${data.gitlawb_did ?? "(none)"}`,
+          `repos:          ${data.repo_count ?? 0}`,
+          `total commits:  ${data.total_commits ?? 0}`,
+          `open tasks:     ${data.open_tasks ?? 0}`,
+          `bounty value:   ${data.total_bounty_value ?? 0}`,
+        ];
+        if (Array.isArray(data.repos) && data.repos.length > 0) {
+          lines.push(``, `Recent repos:`);
+          for (const repo of (data.repos as any[]).slice(0, 5)) {
+            lines.push(`  ${repo.owner ?? "?"}/${repo.name ?? "?"} — ${repo.description ?? ""}`);
+          }
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_miroshark_stats": {
+        const address = String(args.address ?? "").toLowerCase();
+        if (!/^0x[a-f0-9]{40}$/.test(address)) {
+          throw new McpError(ErrorCode.InvalidParams, "address must be 0x...40hex");
+        }
+        const r = await fetch(`${SIGNA_BASE}/api/agents/${address}/miroshark-stats`);
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `miroshark stats failed: ${data?.error ?? r.status}`,
+          );
+        }
+        const lines = [
+          `MiroShark activity for ${address}`,
+          ``,
+          `sims fired:     ${data.sims_fired ?? 0}`,
+          `verdicts:       ${data.verdicts_received ?? 0}`,
+        ];
+        if (data.last_sim_at) lines.push(`last sim:       ${data.last_sim_at}`);
+        if (Array.isArray(data.recent_verdicts) && data.recent_verdicts.length > 0) {
+          lines.push(``, `Recent verdicts:`);
+          for (const v of (data.recent_verdicts as any[]).slice(0, 3)) {
+            lines.push(`  ${v.created_at ?? ""}: ${(v.body ?? "").slice(0, 100)}`);
+          }
+        }
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
