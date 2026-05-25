@@ -23,7 +23,10 @@ export function OPTIONS() {
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const limit = Math.min(Math.max(Number(sp.get("limit") ?? 10), 1), 50);
-  const launches = await bankrRecentLaunches(limit);
+  // Bankr's upstream API ignores the limit param, so we always pull the
+  // full window and slice locally. Keeps the response size predictable.
+  const all = await bankrRecentLaunches(50);
+  const launches = all.slice(0, limit);
   return NextResponse.json(
     { ok: true, count: launches.length, launches },
     { status: 200, headers: CORS },
