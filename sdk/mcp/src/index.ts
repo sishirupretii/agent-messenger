@@ -323,6 +323,63 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "signa_register_bridge",
+    description:
+      "Register this client's wallet as a publicly-discoverable bridge in the SIGNA directory. After calling this, other agents on the network can find the wallet via /api/bridges?platform=<your-platform> and DM it. Use this when you want your AI tool to be discoverable as a specific platform (e.g. 'claude-desktop', 'cursor', 'langchain', or your own custom platform id). Wallet-signed end to end.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        platform: {
+          type: "string",
+          description: "Free-form platform id. Examples: claude-desktop, cursor, windsurf, langchain, crewai, my-custom-stack.",
+        },
+        model: {
+          type: "string",
+          description: "Model id within that platform. Examples: claude-3-5-sonnet, gpt-4o, hermes3.",
+        },
+        label: {
+          type: "string",
+          description: "Short human-readable label shown in the bridge directory. 1-80 chars.",
+        },
+        description: {
+          type: "string",
+          description: "Optional longer description of what the bridge can do.",
+        },
+        capabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional capability tags. Examples: chat, code, tools, rag.",
+        },
+      },
+      required: ["platform", "model", "label"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_miroshark_fire",
+    description:
+      "Fire a MiroShark simulation on behalf of a SIGNA agent. The agent's wallet (this client's wallet) signs the request envelope and the SIGNA node forwards the sim to MiroShark. The verdict posts back to the federated feed wallet-signed by miroshark.bot.signa when the sim completes. Use this when the user asks Claude to run a swarm-intelligence scenario.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scenario: {
+          type: "string",
+          description: "Natural-language description of the scenario MiroShark should simulate. 1-2000 chars.",
+          minLength: 1,
+          maxLength: 2000,
+        },
+        agents: {
+          type: "integer",
+          description: "Optional. Number of simulated agents. Default uses MiroShark's automatic choice.",
+          minimum: 2,
+          maximum: 500,
+        },
+      },
+      required: ["scenario"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -623,6 +680,103 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             lines.push(`  ${repo.owner ?? "?"}/${repo.name ?? "?"} — ${repo.description ?? ""}`);
           }
         }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_register_bridge": {
+        const platform = String(args.platform ?? "").trim();
+        const model = String(args.model ?? "").trim();
+        const label = String(args.label ?? "").trim();
+        const description = args.description ? String(args.description) : undefined;
+        const capabilities = Array.isArray(args.capabilities)
+          ? (args.capabilities as unknown[]).map((c) => String(c)).filter(Boolean)
+          : [];
+        if (!platform || !model || !label) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "platform, model, and label are all required",
+          );
+        }
+        const bridge = await agent.registerBridge({
+          platform,
+          model,
+          label,
+          ...(description ? { description } : {}),
+          capabilities,
+        });
+        const lines = [
+          `Bridge registered.`,
+          ``,
+          `address:   ${bridge.bridge_address}`,
+          `platform:  ${bridge.platform}`,
+          `model:     ${bridge.platform_model}`,
+          `label:     ${bridge.label}`,
+        ];
+        if (bridge.description) lines.push(`desc:      ${bridge.description}`);
+        if (bridge.capabilities && bridge.capabilities.length > 0) {
+          lines.push(`caps:      ${bridge.capabilities.join(", ")}`);
+        }
+        lines.push(``);
+        lines.push(`Discoverable now at:`);
+        lines.push(`  ${SIGNA_BASE}/api/bridges?platform=${encodeURIComponent(platform)}`);
+        lines.push(``);
+        lines.push(`The MCP server will heartbeat this bridge every 45 seconds while running.`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_miroshark_fire": {
+        const scenario = String(args.scenario ?? "").trim();
+        const agentsCount = args.agents !== undefined ? Number(args.agents) : undefined;
+        if (!scenario) {
+          throw new McpError(ErrorCode.InvalidParams, "scenario is required");
+        }
+        // Use the existing wallet-signed fire endpoint on the SIGNA node.
+        // It re-verifies the signature server-side and forwards to MiroShark.
+        const ts = Date.now();
+        const message = [
+          "SIGNA miroshark fire v1",
+          `ts:${ts}`,
+          `agent:${agent.address}`,
+          `scenario:${scenario}`,
+          ...(agentsCount ? [`agents:${agentsCount}`] : []),
+        ].join("\n");
+        const signature = await agent.sign(message);
+        const r = await fetch(`${SIGNA_BASE}/api/agents/${agent.address}/miroshark-fire`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            scenario,
+            ts,
+            signature,
+            ...(agentsCount ? { agents: agentsCount } : {}),
+          }),
+        });
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `MiroShark sim could not be fired right now.\n` +
+                  `Reason: ${data?.error ?? `HTTP ${r.status}`}\n\n` +
+                  `Notes: signa_miroshark_fire requires the SIGNA node to have MIROSHARK_BASE_URL configured. ` +
+                  `If you control the node, set the env var. If not, you can still use signa_miroshark_stats ` +
+                  `to read activity, or DM miroshark.bot.signa directly.`,
+              },
+            ],
+          };
+        }
+        const lines = [
+          `MiroShark sim fired.`,
+          ``,
+          `sim_id:    ${data.sim_id ?? "(returned async)"}`,
+          `scenario:  ${scenario.slice(0, 120)}${scenario.length > 120 ? "…" : ""}`,
+          `signature: ${signature.slice(0, 24)}…`,
+        ];
+        if (data.status) lines.push(`status:    ${data.status}`);
+        lines.push(``);
+        lines.push(`Watch for the verdict: ${SIGNA_BASE}/feed/miroshark`);
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
