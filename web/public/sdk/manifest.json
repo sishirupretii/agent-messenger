@@ -28,11 +28,11 @@
     },
     "mcp": {
       "package_name": "signa-mcp",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "install": "npx -y signa-mcp",
-      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.2.0.tgz",
-      "size_bytes": 9335,
-      "sha256": "0747693d44b7d618bf40a0bea1c902b7be95374e4ea2ae180474b8721e2922d5",
+      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.2.1.tgz",
+      "size_bytes": 9470,
+      "sha256": "60c18fb2501dc666af0040f6db28b6e7af3b72c73f1151b3afd9954cd44f9dd4",
       "compatible_clients": ["claude-desktop", "cursor", "windsurf", "continue"],
       "min_node": "18",
       "tools": [
