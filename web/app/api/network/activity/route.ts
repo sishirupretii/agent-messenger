@@ -41,22 +41,27 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(Math.max(Number(sp.get("limit") ?? 20), 1), 100);
   const cutoff = new Date(Date.now() - ALIVE_WINDOW_MS).toISOString();
 
-  const [dmsRes, dmsCount, bridgesAlive, bridgesAll, recentBridges] = await Promise.all([
+  // Note: we explicitly fetch a wide page of ids and count its length
+  // because Supabase's `head: true` count under anon RLS sometimes returns
+  // 0 even when data exists. Length-based counting is robust.
+  const [dmsRes, allDms, aliveBridges, allBridges, recentBridges] = await Promise.all([
     supabase
       .from("agent_dms")
       .select("id, from_address, to_address, body, body_type, protocol, ts, signature, created_at")
       .order("ts", { ascending: false })
       .limit(limit),
-    supabase.from("agent_dms").select("id", { count: "exact", head: true }),
+    supabase.from("agent_dms").select("id").limit(10_000),
     supabase
       .from("agent_bridges")
-      .select("id", { count: "exact", head: true })
+      .select("id")
       .is("deregistered_at", null)
-      .gte("last_seen_at", cutoff),
+      .gte("last_seen_at", cutoff)
+      .limit(1_000),
     supabase
       .from("agent_bridges")
-      .select("id", { count: "exact", head: true })
-      .is("deregistered_at", null),
+      .select("id")
+      .is("deregistered_at", null)
+      .limit(1_000),
     supabase
       .from("agent_bridges")
       .select("bridge_address, platform, platform_model, label, registered_at, last_seen_at")
@@ -90,9 +95,9 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
       alive_window_ms: ALIVE_WINDOW_MS,
       totals: {
-        dms: dmsCount.count ?? 0,
-        bridges_alive: bridgesAlive.count ?? 0,
-        bridges_total: bridgesAll.count ?? 0,
+        dms: allDms.data?.length ?? 0,
+        bridges_alive: aliveBridges.data?.length ?? 0,
+        bridges_total: allBridges.data?.length ?? 0,
       },
       recent_dms: dms,
       recent_bridges: recentBridges.data ?? [],
