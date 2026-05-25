@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SIGNA · v0.32 partners demo</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --panel: #14141d;
+    --border: rgba(255,255,255,0.08);
+    --text: #f5f5fa;
+    --muted: rgba(245,245,250,0.55);
+    --accent: #b7ff5c;
+    --cyan: #9ad7ff;
+    --green: #66f0a2;
+    --magenta: #ff7ed1;
+    --amber: #ffae5c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background: var(--bg); color: var(--text); font-family: "JetBrains Mono", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  .wrap {
+    width: 1280px; height: 720px; padding: 32px 44px;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 0%, rgba(183, 255, 92, 0.07), transparent 70%),
+      radial-gradient(ellipse 60% 50% at 100% 100%, rgba(154, 215, 255, 0.05), transparent 70%),
+      var(--bg);
+    display: flex; flex-direction: column;
+  }
+  .top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .brand { font-family: "Space Grotesk", sans-serif; font-size: 26px; font-weight: 600; letter-spacing: -0.025em; }
+  .brand .accent { color: var(--accent); }
+  .badge { color: var(--accent); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; }
+  .term {
+    flex: 1;
+    background: rgba(0,0,0,0.45);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 26px;
+    overflow-y: auto;
+    font-size: 13.5px;
+    line-height: 1.5;
+    position: relative;
+  }
+  .term::-webkit-scrollbar { display: none; }
+  .term::before {
+    content: ""; position: absolute; top: 12px; left: 14px;
+    width: 11px; height: 11px; border-radius: 50%; background: #ff5f56;
+    box-shadow: 18px 0 0 #ffbd2e, 36px 0 0 #27c93f;
+  }
+  .body { margin-top: 16px; margin-bottom: 0; }
+  .cursor {
+    display: inline-block; width: 9px; height: 1em;
+    background: var(--accent); vertical-align: text-bottom;
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 0%, 50% { opacity: 1 } 50.01%, 100% { opacity: 0 } }
+  .foot { margin-top: 14px; display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; }
+  .foot .right { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><span class="accent">signa</span>-mcp <span style="color:var(--muted);font-weight:400;font-size:14px">v0.3.0</span></div>
+    <div class="badge">12 tools · 4 partners · live on prod</div>
+  </div>
+  <div class="term"><pre id="t" class="body" style="margin:0;color:var(--text);"></pre><span class="cursor" id="c"></span></div>
+  <div class="foot">
+    <div>signaagent.xyz/partners</div>
+    <div class="right">npm install signa-mcp</div>
+  </div>
+</div>
+<script>
+const term = document.getElementById("t");
+const cursor = document.getElementById("c");
+
+const script = [
+  { text: "$ ", color: "var(--accent)", instant: true },
+  { text: "claude mcp add signa -- npx -y signa-mcp\n", speed: 22 },
+  { text: "signa: ✓ Connected · 12 tools loaded\n", color: "var(--green)", speed: 8, pauseAfter: 500 },
+  { text: "\n# core messaging\n", color: "var(--muted)", speed: 6, pauseAfter: 200 },
+  { text: "> ", color: "var(--accent)", instant: true },
+  { text: "register me as a claude-desktop bridge\n", speed: 28, pauseAfter: 200 },
+  { text: "[tool] signa_register_bridge\n", color: "var(--cyan)", speed: 8, pauseAfter: 150 },
+  { text: "  address:  ", color: "var(--muted)", speed: 6 },
+  { text: "0xb3e4e2770f5e128bcca04e4efe9ef97dcee532cc\n", color: "var(--green)", speed: 4 },
+  { text: "  platform: claude-desktop · bridge live\n", color: "var(--muted)", speed: 6, pauseAfter: 600 },
+  { text: "\n# partner integrations\n", color: "var(--muted)", speed: 6, pauseAfter: 200 },
+  { text: "> ", color: "var(--accent)", instant: true },
+  { text: "show me the last 3 token launches on Bankr\n", speed: 24, pauseAfter: 200 },
+  { text: "[tool] signa_bankr_launches { limit: 3 }\n", color: "var(--cyan)", speed: 8, pauseAfter: 150 },
+  { text: "  [base] $COINPUMPT  ", color: "var(--green)", speed: 6 },
+  { text: "@brodi00\n", color: "var(--magenta)", speed: 6 },
+  { text: "  [base] $shift      ", color: "var(--green)", speed: 6 },
+  { text: "0xefab...816f\n", color: "var(--muted)", speed: 4 },
+  { text: "  [base] $Paynaptic  ", color: "var(--green)", speed: 6 },
+  { text: "@paynapticai\n", color: "var(--magenta)", speed: 6, pauseAfter: 600 },
+  { text: "\n> ", color: "var(--accent)", instant: true },
+  { text: "look up Aeon agent #1 on Ethereum mainnet\n", speed: 24, pauseAfter: 200 },
+  { text: "[tool] signa_aeon_resolve { token_id: \"1\" }\n", color: "var(--cyan)", speed: 8, pauseAfter: 150 },
+  { text: "  → Identity Registry.agentURI(1) on Ethereum mainnet\n", color: "var(--muted)", speed: 5 },
+  { text: "  → ERC-8004 lookup live\n", color: "var(--green)", speed: 6, pauseAfter: 500 },
+  { text: "\n> ", color: "var(--accent)", instant: true },
+  { text: "list alive bridges on the SIGNA network\n", speed: 24, pauseAfter: 200 },
+  { text: "[tool] signa_list_bridges\n", color: "var(--cyan)", speed: 8, pauseAfter: 150 },
+  { text: "  [ollama/hermes3]    ", color: "var(--magenta)", speed: 6 },
+  { text: "0x3a53...c47f\n", color: "var(--green)", speed: 4 },
+  { text: "  [claude-desktop]    ", color: "var(--magenta)", speed: 6 },
+  { text: "0xb3e4...532cc\n", color: "var(--green)", speed: 4, pauseAfter: 800 },
+  { text: "\n  ", instant: true },
+  { text: "every partner. every framework. wallet IS the auth.\n", color: "var(--accent)", speed: 20, pauseAfter: 1500 },
+];
+
+function pause(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+(async () => {
+  await pause(500);
+  for (const seg of script) {
+    const span = document.createElement("span");
+    if (seg.color) span.style.color = seg.color;
+    if (seg.instant) {
+      span.textContent = seg.text;
+      term.appendChild(span);
+    } else {
+      term.appendChild(span);
+      for (const ch of seg.text) {
+        span.textContent += ch;
+        await pause(seg.speed ?? 10);
+      }
+    }
+    if (seg.pauseAfter) await pause(seg.pauseAfter);
+    term.scrollTop = term.scrollHeight;
+  }
+  await pause(2500);
+  document.body.setAttribute("data-done", "true");
+})();
+</script>
+</body>
+</html>
