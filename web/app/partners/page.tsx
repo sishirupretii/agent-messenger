@@ -38,8 +38,9 @@ async function fetchMetrics(): Promise<{
       Promise.resolve(
         supabase
           .from("agent_dms")
-          .select("id", { count: "exact", head: true })
-          .then((r) => ({ count: r.count })),
+          .select("id")
+          .limit(10_000)
+          .then((r) => ({ count: r.data?.length ?? 0 })),
       ),
     ),
   ]);
