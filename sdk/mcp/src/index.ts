@@ -563,16 +563,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `bankr launches failed: ${data?.error ?? r.status}`,
           );
         }
-        const launches = (data.launches ?? []) as Array<Record<string, unknown>>;
+        const launches = (data.launches ?? []) as Array<Record<string, any>>;
         if (launches.length === 0) {
           return { content: [{ type: "text", text: "No recent Bankr launches." }] };
         }
         const lines = [`${launches.length} recent Bankr launch${launches.length === 1 ? "" : "es"}:`, ``];
         for (const l of launches) {
-          lines.push(`[${l.chain ?? "?"}] $${l.symbol ?? "?"} — ${l.name ?? ""}`);
-          if (l.address) lines.push(`  address: ${l.address}`);
-          if (l.launched_at) lines.push(`  launched: ${l.launched_at}`);
-          if (l.creator) lines.push(`  creator: ${l.creator}`);
+          const symbol = l.tokenSymbol ?? l.symbol ?? "?";
+          const name = l.tokenName ?? l.name ?? "";
+          const address = l.tokenAddress ?? l.address;
+          const launchedAt = l.timestamp ?? l.launched_at;
+          const deployer = l.deployer?.walletAddress ?? l.creator;
+          const handle = l.feeRecipient?.xUsername;
+          lines.push(`[${l.chain ?? "?"}] $${symbol} — ${name}`);
+          if (address) lines.push(`  address:  ${address}`);
+          if (launchedAt) lines.push(`  launched: ${launchedAt}`);
+          if (deployer) lines.push(`  deployer: ${deployer}`);
+          if (handle) lines.push(`  twitter:  @${handle}`);
           lines.push(``);
         }
         return { content: [{ type: "text", text: lines.join("\n") }] };
