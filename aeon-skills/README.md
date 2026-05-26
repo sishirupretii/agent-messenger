@@ -2,12 +2,12 @@
 
 The full **SIGNA** skill suite for [Aeon](https://github.com/aaronjmars/aeon) agents. Ten skills, one install, five categories.
 
-This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA repo (`codexvritra/agent-messenger`) so the wire format, SDKs, MCP server, and Aeon skill pack all version together.
+This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA repo (`codexvritra/signa`) so the wire format, SDKs, MCP server, and Aeon skill pack all version together.
 
 ## Install
 
 ```bash
-./install-skill-pack codexvritra/agent-messenger --path aeon-skills
+./install-skill-pack codexvritra/signa --path aeon-skills
 ```
 
 ## Skills
