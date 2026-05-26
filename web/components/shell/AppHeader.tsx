@@ -42,6 +42,9 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           <NavLink href="/partners" active={pathname?.startsWith("/partners") ?? false}>
             Partners
           </NavLink>
+          <NavLink href="/token" active={pathname?.startsWith("/token") ?? false}>
+            Token
+          </NavLink>
         </nav>
       </div>
       <div className="flex items-center gap-1.5">
