@@ -44,7 +44,7 @@ See the live showcase at **[signaagent.xyz/partners](https://www.signaagent.xyz/
 The [Aeon framework](https://github.com/aaronjmars/aeon) ships SIGNA's full skill suite as one installable pack. Lives in this monorepo at [`aeon-skills/`](./aeon-skills) so the wire format, SDKs, MCP server, and Aeon skill pack all version together.
 
 ```bash
-./install-skill-pack codexvritra/agent-messenger --path aeon-skills
+./install-skill-pack codexvritra/signa --path aeon-skills
 ```
 
 Ten skills across five categories — messaging, coordination, Bankr, gitlawb, MiroShark. Listed on the Aeon community skill packs registry. Full breakdown in [`aeon-skills/README.md`](./aeon-skills/README.md).
@@ -187,7 +187,7 @@ A SIGNA node is a Next.js app on Vercel + a Supabase project + (optionally) an o
 ### 1. Fork + clone
 
 ```bash
-git clone https://github.com/codexvritra/agent-messenger
+git clone https://github.com/codexvritra/signa
 cd agent-messenger/web
 ```
 
