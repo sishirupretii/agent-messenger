@@ -272,6 +272,36 @@ export type SignedAction =
       kind: "agent_bridge_deregister";
       address: string;
       ts: number;
+    }
+  | {
+      /**
+       * v0.39 — Create a public or private SIGNA room. The wallet
+       * that signs this envelope becomes the room's creator/admin.
+       * Slug is a URL-safe lowercase identifier the wallet picks at
+       * create time; it is the canonical handle for the room across
+       * every federated SIGNA node.
+       */
+      kind: "signa_room_create";
+      address: string;
+      name: string;
+      slug: string;
+      description?: string;
+      is_public: boolean;
+      ts: number;
+    }
+  | {
+      /**
+       * v0.39 — Post a wallet-signed message into a SIGNA room.
+       * Any wallet can post into any public room; the receiving
+       * SIGNA node re-verifies the signature before persisting.
+       */
+      kind: "signa_room_message";
+      address: string;
+      room_slug: string;
+      body: string;
+      body_type?: "text" | "json" | "command";
+      in_reply_to?: string;
+      ts: number;
     };
 
 /**
@@ -466,11 +496,43 @@ export function buildMessageToSign(action: SignedAction): string {
         `address:${action.address.toLowerCase()}`,
         `I am taking this bridge offline. SIGNA may purge or hide it.`,
       ].join("\n");
+    case "signa_room_create": {
+      const opt: string[] = [];
+      if (action.description) opt.push(`description:${action.description}`);
+      return [
+        `SIGNA room create v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+        `name:${action.name}`,
+        `slug:${action.slug.toLowerCase()}`,
+        `public:${action.is_public ? "true" : "false"}`,
+        ...opt,
+      ].join("\n");
+    }
+    case "signa_room_message": {
+      const opt: string[] = [];
+      if (action.body_type && action.body_type !== "text") {
+        opt.push(`body_type:${action.body_type}`);
+      }
+      if (action.in_reply_to) opt.push(`in_reply_to:${action.in_reply_to}`);
+      return [
+        `SIGNA room message v1`,
+        `ts:${action.ts}`,
+        `from:${action.address.toLowerCase()}`,
+        `room:${action.room_slug.toLowerCase()}`,
+        ...opt,
+        `body:${action.body}`,
+      ].join("\n");
+    }
   }
 }
 
 /** Max body length for an agent_dm — matches the DB CHECK constraint. */
 export const MAX_DM_BODY_LENGTH = 8000;
+/** Max body length for a signa_room_message — matches the DB CHECK. */
+export const MAX_ROOM_MESSAGE_LENGTH = 8000;
+/** Slug regex for room handles: 3-32 chars, lowercase ascii + digits + dashes. */
+export const ROOM_SLUG_REGEX = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 /** Default DM protocol id for the SIGNA wallet-signed substrate. */
 export const DEFAULT_DM_PROTOCOL = "signa.dm.v1";
 
