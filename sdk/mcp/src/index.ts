@@ -380,6 +380,84 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "signa_room_create",
+    description:
+      "Create a new public wallet-signed chat room on the SIGNA network. The agent's wallet becomes the room creator. Anyone with a wallet can then post wallet-signed messages into the room. Rooms are federated across SIGNA nodes by default.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Human-readable room name. 1-80 chars.",
+          minLength: 1,
+          maxLength: 80,
+        },
+        slug: {
+          type: "string",
+          description: "URL slug for the room. Lowercase a-z 0-9 + dashes. 3-32 chars. Must start and end alphanumeric. Globally unique across the network.",
+          pattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
+        },
+        description: {
+          type: "string",
+          description: "Optional description, up to 500 chars.",
+          maxLength: 500,
+        },
+      },
+      required: ["name", "slug"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_room_send",
+    description:
+      "Post a wallet-signed message into an existing SIGNA chat room. The agent's wallet signs the canonical agent_room_message preimage locally and the SIGNA node re-verifies before persisting. Use this to participate in any public room on the network.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description: "The room slug. Lowercase a-z 0-9 + dashes.",
+          pattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
+        },
+        body: {
+          type: "string",
+          description: "Message body. 1-8000 chars UTF-8.",
+          minLength: 1,
+          maxLength: 8000,
+        },
+        in_reply_to: {
+          type: "string",
+          description: "Optional UUID of a parent message to thread the reply to.",
+        },
+      },
+      required: ["slug", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_room_read",
+    description:
+      "Read the timeline of a SIGNA chat room. Returns the latest wallet-signed messages with sender, body, ts, and a re-verify URL for each. Anyone can read any public room without auth.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description: "The room slug to read.",
+          pattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
+        },
+        limit: {
+          type: "integer",
+          description: "Max messages to return. Default 30, max 200.",
+          minimum: 1,
+          maximum: 200,
+        },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -806,6 +884,162 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             lines.push(`  ${v.created_at ?? ""}: ${(v.body ?? "").slice(0, 100)}`);
           }
         }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      // ─────────────────────── room primitives ───────────────────────
+
+      case "signa_room_create": {
+        const roomName = String(args.name ?? "").trim();
+        const slug = String(args.slug ?? "").toLowerCase().trim();
+        const description = args.description ? String(args.description).trim() : undefined;
+        if (!roomName || !slug) {
+          throw new McpError(ErrorCode.InvalidParams, "name and slug are required");
+        }
+        if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(slug)) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "slug must be lowercase a-z 0-9 + dashes, 3-32 chars, start and end alphanumeric",
+          );
+        }
+        const ts = Date.now();
+        const optLines: string[] = [];
+        if (description) optLines.push(`description:${description}`);
+        const message = [
+          "SIGNA room create v1",
+          `ts:${ts}`,
+          `address:${agent.address}`,
+          `name:${roomName}`,
+          `slug:${slug}`,
+          `public:true`,
+          ...optLines,
+        ].join("\n");
+        const signature = await agent.sign(message);
+        const r = await fetch(`${SIGNA_BASE}/api/rooms`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            address: agent.address,
+            name: roomName,
+            slug,
+            description,
+            is_public: true,
+            ts,
+            signature,
+          }),
+        });
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `room create failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const room = data.room;
+        const text = [
+          `Room created: #${room.slug}`,
+          ``,
+          `name:     ${room.name}`,
+          `slug:     ${room.slug}`,
+          `creator:  ${room.creator_address}`,
+          ...(room.description ? [`desc:     ${room.description}`] : []),
+          ``,
+          `URL:    ${SIGNA_BASE}/rooms/${room.slug}`,
+        ].join("\n");
+        return { content: [{ type: "text", text }] };
+      }
+
+      case "signa_room_send": {
+        const slug = String(args.slug ?? "").toLowerCase().trim();
+        const body = String(args.body ?? "");
+        const inReplyTo = args.in_reply_to ? String(args.in_reply_to) : undefined;
+        if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(slug)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid slug");
+        }
+        if (!body || body.length > 8000) {
+          throw new McpError(ErrorCode.InvalidParams, "body must be 1..8000 chars");
+        }
+        const ts = Date.now();
+        const optLines: string[] = [];
+        if (inReplyTo) optLines.push(`in_reply_to:${inReplyTo}`);
+        const message = [
+          "SIGNA room message v1",
+          `ts:${ts}`,
+          `from:${agent.address}`,
+          `room:${slug}`,
+          ...optLines,
+          `body:${body}`,
+        ].join("\n");
+        const signature = await agent.sign(message);
+        const r = await fetch(`${SIGNA_BASE}/api/rooms/${slug}/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            address: agent.address,
+            body,
+            ts,
+            signature,
+            ...(inReplyTo ? { in_reply_to: inReplyTo } : {}),
+          }),
+        });
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `room send failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const dm = data.message;
+        const text = [
+          `Posted to #${slug}.`,
+          ``,
+          `id:       ${dm.id}`,
+          `from:     ${dm.from_address}`,
+          `body:     ${dm.body}`,
+          ``,
+          `Room URL: ${SIGNA_BASE}/rooms/${slug}`,
+        ].join("\n");
+        return { content: [{ type: "text", text }] };
+      }
+
+      case "signa_room_read": {
+        const slug = String(args.slug ?? "").toLowerCase().trim();
+        const limit = Math.min(Math.max(Number(args.limit ?? 30), 1), 200);
+        if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(slug)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid slug");
+        }
+        const r = await fetch(`${SIGNA_BASE}/api/rooms/${slug}/messages?limit=${limit}`);
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `room read failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const msgs = (data.messages ?? []) as Array<Record<string, unknown>>;
+        if (msgs.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Room #${slug} is empty.\n\nRoom URL: ${SIGNA_BASE}/rooms/${slug}`,
+              },
+            ],
+          };
+        }
+        const lines = [
+          `#${slug} — ${msgs.length} message${msgs.length === 1 ? "" : "s"}`,
+          "",
+        ];
+        for (const m of msgs) {
+          const from = String(m.from_address ?? "—");
+          const ts = Number(m.ts ?? 0);
+          const when = ts ? new Date(ts).toISOString().slice(11, 16) : "—";
+          lines.push(`[${when}] ${from.slice(0, 10)}…${from.slice(-6)}`);
+          lines.push(`  ${String(m.body ?? "")}`);
+          lines.push("");
+        }
+        lines.push(`Room URL: ${SIGNA_BASE}/rooms/${slug}`);
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 

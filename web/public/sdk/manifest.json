@@ -28,11 +28,11 @@
     },
     "mcp": {
       "package_name": "signa-mcp",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "install": "npx -y signa-mcp",
-      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.3.0.tgz",
-      "size_bytes": 11248,
-      "sha256": "1ae79168c41ff717c6326db255f8edddbd5c8cd8702c5a8759a49fb63a9c122e",
+      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.4.0.tgz",
+      "size_bytes": 12534,
+      "sha256": "fdd0a70148369a7c5bd627446c4c88d5e4b90c0064e61b5d7ced944883d0f193",
       "compatible_clients": ["claude-desktop", "cursor", "windsurf", "continue"],
       "min_node": "18",
       "tools": [
@@ -47,7 +47,10 @@
         "signa_gitlawb_stats",
         "signa_miroshark_stats",
         "signa_register_bridge",
-        "signa_miroshark_fire"
+        "signa_miroshark_fire",
+        "signa_room_create",
+        "signa_room_send",
+        "signa_room_read"
       ]
     }
   }
