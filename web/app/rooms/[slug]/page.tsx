@@ -1,7 +1,5 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppHeader } from "@/components/shell/AppHeader";
-import { Footer } from "@/components/shell/Footer";
 import { supabase } from "@/lib/supabase";
 import { RoomChat } from "./RoomChat";
 
@@ -24,6 +22,17 @@ export async function generateMetadata({
   };
 }
 
+interface RoomRow {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  creator_address: string;
+  is_public: boolean;
+  ts: number;
+  created_at: string;
+}
+
 export default async function RoomPage({
   params,
 }: {
@@ -32,52 +41,39 @@ export default async function RoomPage({
   const { slug: raw } = await params;
   const slug = (raw ?? "").toLowerCase();
 
-  const { data: room } = await supabase
-    .from("signa_rooms")
-    .select("id, name, slug, description, creator_address, is_public, ts, created_at")
-    .eq("slug", slug)
-    .maybeSingle();
+  const [{ data: room }, { data: allRoomsRaw }] = await Promise.all([
+    supabase
+      .from("signa_rooms")
+      .select("id, name, slug, description, creator_address, is_public, ts, created_at")
+      .eq("slug", slug)
+      .maybeSingle(),
+    supabase
+      .from("signa_rooms")
+      .select("name, slug, description")
+      .eq("is_public", true)
+      .order("created_at", { ascending: false })
+      .limit(30),
+  ]);
 
   if (!room) notFound();
+
+  const allRooms = (allRoomsRaw ?? []) as Array<Pick<RoomRow, "name" | "slug" | "description">>;
 
   return (
     <div className="min-h-screen flex flex-col">
       <AppHeader />
-      <main className="flex-1">
-        <section className="border-b border-white/[0.06]">
-          <div className="max-w-4xl mx-auto px-6 lg:px-10 pt-10 pb-6">
-            <Link
-              href="/rooms"
-              className="text-[11.5px] uppercase tracking-[0.18em] text-white/45 hover:text-white/75"
-            >
-              ← rooms
-            </Link>
-            <div className="mt-3 flex items-baseline justify-between flex-wrap gap-2">
-              <h1 className="font-display text-3xl font-medium tracking-[-0.02em]">
-                {room.name}
-              </h1>
-              <div className="text-[11.5px] font-mono text-white/45">#{room.slug}</div>
-            </div>
-            {room.description && (
-              <p className="mt-2 text-white/65 text-[14px] leading-relaxed">
-                {room.description}
-              </p>
-            )}
-            <div className="mt-3 text-[11px] font-mono text-white/40">
-              created by {room.creator_address.slice(0, 6)}…{room.creator_address.slice(-4)}
-              {" · "}wallet-signed
-              {" · "}federated
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <div className="max-w-4xl mx-auto px-6 lg:px-10 py-8">
-            <RoomChat slug={room.slug} />
-          </div>
-        </section>
+      <main className="flex-1 overflow-hidden">
+        <div className="max-w-[1600px] mx-auto h-[calc(100vh-64px-1px)]">
+          <RoomChat
+            slug={room.slug}
+            roomName={room.name}
+            roomDescription={room.description ?? null}
+            roomCreator={room.creator_address}
+            roomCreatedAt={room.created_at}
+            rooms={allRooms}
+          />
+        </div>
       </main>
-      <Footer />
     </div>
   );
 }
