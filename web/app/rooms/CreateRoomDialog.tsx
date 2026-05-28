@@ -1,11 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAccount, useWalletClient } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { keccak256, toBytes, type Address } from "viem";
+import { base } from "viem/chains";
 
 const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
+
+// Same ABI as web/lib/onchain-rooms.ts but client-trimmed to just anchor().
+const ANCHOR_ABI = [
+  {
+    type: "function",
+    name: "anchor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "slug", type: "string" },
+      { name: "manifestHash", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+interface AnchorConfig {
+  deployed: boolean;
+  address: Address | null;
+  chain_id: number | null;
+}
+
+interface CreatedRoom {
+  slug: string;
+  signed_message: string;
+}
 
 interface GateArgs {
   token: string; // 0x...
@@ -57,6 +84,40 @@ export function CreateRoomDialog() {
   const [gateMin, setGateMin] = useState("1"); // human units, converted to raw using 18 dec default
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // v0.53 — anchor flow: after the room is created we show the anchor
+  // CTA if the contract is deployed on Base. createdRoom holds the
+  // post-create state so the dialog can transition to the anchor view.
+  const [anchorConfig, setAnchorConfig] = useState<AnchorConfig | null>(null);
+  const [createdRoom, setCreatedRoom] = useState<CreatedRoom | null>(null);
+  const [anchoring, setAnchoring] = useState(false);
+  const [anchorTx, setAnchorTx] = useState<string | null>(null);
+  const [anchorError, setAnchorError] = useState<string | null>(null);
+
+  // Read whether the registry is deployed once the dialog opens.
+  useEffect(() => {
+    if (!open || anchorConfig) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/anchor-config");
+        const d = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (d?.ok) {
+          setAnchorConfig({
+            deployed: !!d.deployed,
+            address: d.address ?? null,
+            chain_id: d.chain_id ?? null,
+          });
+        }
+      } catch {
+        // ignore — anchor section just hides
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, anchorConfig]);
 
   async function submit() {
     setError(null);
@@ -143,11 +204,43 @@ export function CreateRoomDialog() {
       if (!r.ok || !data?.ok) {
         throw new Error(data?.error ?? `HTTP ${r.status}`);
       }
-      router.push(`/rooms/${data.room.slug}`);
+
+      // v0.53 — if the registry is deployed, pause on a success state with
+      // the anchor CTA. Otherwise jump straight to the room.
+      if (anchorConfig?.deployed) {
+        setCreatedRoom({
+          slug: data.room.slug,
+          // The server echoes the canonical signed message it just persisted.
+          signed_message: message,
+        });
+      } else {
+        router.push(`/rooms/${data.room.slug}`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function anchor() {
+    setAnchorError(null);
+    if (!createdRoom || !walletClient || !anchorConfig?.address) return;
+    setAnchoring(true);
+    try {
+      const manifestHash = keccak256(toBytes(createdRoom.signed_message));
+      const hash = await walletClient.writeContract({
+        address: anchorConfig.address,
+        abi: ANCHOR_ABI,
+        functionName: "anchor",
+        args: [createdRoom.slug, manifestHash],
+        chain: base,
+      });
+      setAnchorTx(hash);
+    } catch (e) {
+      setAnchorError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnchoring(false);
     }
   }
 
@@ -159,6 +252,102 @@ export function CreateRoomDialog() {
       >
         Create a room →
       </button>
+    );
+  }
+
+  // Post-create anchor view — only rendered when the registry is deployed
+  // AND the room was just created. Two states: pre-tx and post-tx.
+  if (open && createdRoom && anchorConfig?.deployed) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-6 bg-black/60 backdrop-blur-sm">
+        <div className="w-full max-w-lg border border-white/15 bg-[#0b0b13] rounded-md p-6 shadow-2xl">
+          <div className="flex items-baseline justify-between mb-4">
+            <div className="font-display text-2xl font-medium tracking-[-0.015em]">
+              Room created
+            </div>
+            <button
+              onClick={() => router.push(`/rooms/${createdRoom.slug}`)}
+              className="text-white/45 hover:text-white text-[14px]"
+            >
+              open room →
+            </button>
+          </div>
+
+          <div className="text-[13px] text-white/65 leading-relaxed mb-4">
+            <span className="text-white">#{createdRoom.slug}</span> is live and
+            wallet-signed. Anchor it on Base so federated nodes can verify
+            the room identity without trusting any one server.
+          </div>
+
+          {anchorTx ? (
+            <div className="border border-emerald-300/40 bg-emerald-300/[0.06] rounded-sm p-4 mb-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-300 mb-2">
+                anchor tx submitted
+              </div>
+              <div className="text-[12.5px] text-white/75 mb-2">
+                Your wallet broadcast the anchor() call. Once the tx
+                confirms, the room shows ANCHORED ON BASE on its header.
+              </div>
+              <a
+                href={`https://basescan.org/tx/${anchorTx}`}
+                target="_blank"
+                rel="noreferrer"
+                className="block text-[11px] font-mono text-white/55 hover:text-white break-all"
+              >
+                {anchorTx}
+              </a>
+            </div>
+          ) : (
+            <div className="border border-white/10 rounded-sm bg-white/[0.02] p-4 mb-4">
+              <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)] mb-2">
+                anchor on base · ~$0.01 gas
+              </div>
+              <div className="text-[12.5px] text-white/65 leading-relaxed mb-3">
+                Your wallet calls{" "}
+                <code className="text-white/85">anchor(slug, manifestHash)</code>{" "}
+                on{" "}
+                <code className="text-white/85">SignaRoomRegistry</code>.
+                First-write wins — the slug becomes globally yours on
+                Base.
+              </div>
+              <div className="text-[10.5px] font-mono text-white/40 break-all mb-3">
+                registry: {anchorConfig.address}
+              </div>
+              {anchorError && (
+                <div className="text-[12px] text-red-400 bg-red-500/[0.08] border border-red-500/30 rounded-sm px-3 py-2 mb-3">
+                  {anchorError}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={anchor}
+                  disabled={anchoring}
+                  className="bg-[var(--accent)] text-black font-semibold rounded-sm px-4 py-2 text-[13px] hover:brightness-110 transition disabled:opacity-50 uppercase tracking-wide"
+                >
+                  {anchoring ? "signing tx…" : "anchor on base"}
+                </button>
+                <button
+                  onClick={() => router.push(`/rooms/${createdRoom.slug}`)}
+                  className="text-white/55 hover:text-white px-4 py-2 text-[13px]"
+                >
+                  skip for now
+                </button>
+              </div>
+            </div>
+          )}
+
+          {anchorTx && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => router.push(`/rooms/${createdRoom.slug}`)}
+                className="bg-[var(--accent)] text-black font-semibold rounded-sm px-5 py-2 text-[13.5px] hover:brightness-110 transition uppercase tracking-wide"
+              >
+                open room →
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 
