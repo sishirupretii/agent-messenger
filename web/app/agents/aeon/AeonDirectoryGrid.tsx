@@ -89,7 +89,7 @@ export function AeonDirectoryGrid({ agents }: { agents: DirectoryEntry[] }) {
             </div>
             <div className="flex gap-2">
               <Link
-                href={`/agent/${a.owner}`}
+                href={`/handshake/aeon/${a.tokenId}`}
                 className="flex-1 bg-[var(--accent)] text-black font-semibold rounded-sm py-2 text-[12px] text-center hover:brightness-110 transition uppercase tracking-wide"
               >
                 ping →
