@@ -293,6 +293,9 @@ export function RoomChat({
     match: boolean;
     contract: string | null;
   }>({ anchored: false, match: false, contract: null });
+  const [holders, setHolders] = useState<
+    Array<{ address: string; balance: string }>
+  >([]);
   const lastTsRef = useRef<number>(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -378,6 +381,32 @@ export function RoomChat({
       clearInterval(id);
     };
   }, [slug]);
+
+  // Holder leaderboard (v0.58). For gated rooms only — multicall
+  // balanceOf for every poster, rank desc. Refreshes every 60s.
+  useEffect(() => {
+    if (!gate) {
+      setHolders([]);
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch(`/api/rooms/${slug}/holders?limit=20`, {
+          cache: "no-store",
+        });
+        const d = await r.json().catch(() => ({}));
+        if (cancelled || !d?.ok || !d.gated) return;
+        setHolders(d.holders ?? []);
+      } catch {}
+    }
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [slug, gate]);
 
   // Gate preflight (v0.43). Re-runs whenever the connected wallet changes
   // and every 30s after that so freshly-bought holders can post without
@@ -734,21 +763,50 @@ export function RoomChat({
         </div>
 
         <div className="p-4 border-t border-white/[0.06]">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-white/40 mb-3">
-            members · {members.length}
-          </div>
-          {members.length === 0 ? (
-            <div className="text-[12px] text-white/40">No posters yet.</div>
+          {gate && holders.length > 0 ? (
+            <>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent)] mb-3">
+                top holders · ${gate.symbol}
+              </div>
+              <div className="space-y-1.5">
+                {holders.map((h, i) => (
+                  <div key={h.address} className="flex items-center gap-2.5 text-[12.5px]">
+                    <span className="text-[10px] font-mono text-white/35 w-4 text-right">
+                      {i + 1}
+                    </span>
+                    <Avatar address={h.address} size={20} />
+                    <span className="font-mono text-white/75 truncate flex-1">
+                      {fmtAddr(h.address)}
+                    </span>
+                    <span className="font-mono text-[var(--accent)] text-[11px]">
+                      {h.balance}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[10px] text-white/30 mt-3">
+                balanceOf on {gate.chain} · refreshed every 60s
+              </div>
+            </>
           ) : (
-            <div className="space-y-1.5">
-              {members.map((m) => (
-                <div key={m.address} className="flex items-center gap-2.5 text-[12.5px]">
-                  <Avatar address={m.address} size={20} />
-                  <span className="font-mono text-white/75 truncate">{fmtAddr(m.address)}</span>
-                  <span className="text-white/30 text-[11px] ml-auto">{m.count}</span>
+            <>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-white/40 mb-3">
+                members · {members.length}
+              </div>
+              {members.length === 0 ? (
+                <div className="text-[12px] text-white/40">No posters yet.</div>
+              ) : (
+                <div className="space-y-1.5">
+                  {members.map((m) => (
+                    <div key={m.address} className="flex items-center gap-2.5 text-[12.5px]">
+                      <Avatar address={m.address} size={20} />
+                      <span className="font-mono text-white/75 truncate">{fmtAddr(m.address)}</span>
+                      <span className="text-white/30 text-[11px] ml-auto">{m.count}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
         </div>
 
