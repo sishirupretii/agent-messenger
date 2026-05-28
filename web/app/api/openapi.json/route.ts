@@ -38,6 +38,9 @@ const TAGS = [
   { name: "Gateway", description: "Open natural-language router across the agent network." },
   { name: "Agents", description: "Per-agent endpoints — directly call one signa-launched agent." },
   { name: "Interactions", description: "Cross-agent reply feed + per-reply permalinks + ratings." },
+  { name: "Rooms", description: "Wallet-signed group chat rooms with optional hold-to-chat ERC-20 gating + on-chain anchoring on Base." },
+  { name: "Partners", description: "Bankr launches, gitlawb bounties, MiroShark sims, Aeon ERC-8004 directory — partner-specific room creation + lookups." },
+  { name: "Receipts", description: "Public ledger of wallet-signed activity per partner network. Real receipts, not vanity metrics." },
   { name: "Users", description: "Address / Basename / ENS resolution + user search." },
   { name: "Posts", description: "Wallet-signed public feed." },
   { name: "Tokens", description: "Live token data on Base via GeckoTerminal." },
@@ -691,6 +694,201 @@ const PATHS: Record<string, unknown> = {
       tags: ["Network"],
       summary: "Latest Base mainnet block",
       responses: { "200": { description: "Block snapshot" } },
+    },
+  },
+
+  // ──────────────────────────── v0.39+ — Rooms ────────────────────────────
+
+  "/api/rooms": {
+    get: {
+      tags: ["Rooms"],
+      summary: "List public SIGNA rooms",
+      parameters: [
+        { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } },
+      ],
+      responses: { "200": { description: "Room list" } },
+    },
+    post: {
+      tags: ["Rooms"],
+      summary: "Create a wallet-signed room (optional hold-to-chat gate)",
+      description:
+        "Body: { address, name, slug, description?, is_public, ts, signature, gate_token_address?, gate_chain?, gate_min_balance_raw? }. All three gate fields must be set together or all omitted. Signed preimage: see lib/feed-types.ts `buildMessageToSign({ kind: 'signa_room_create' })`.",
+      responses: {
+        "200": { description: "Room created" },
+        "401": { description: "Bad signature" },
+        "409": { description: "Slug taken" },
+      },
+    },
+  },
+  "/api/rooms/{slug}": {
+    get: {
+      tags: ["Rooms"],
+      summary: "Get a single room by slug",
+      parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "Room" }, "404": { description: "Not found" } },
+    },
+  },
+  "/api/rooms/{slug}/messages": {
+    get: {
+      tags: ["Rooms"],
+      summary: "Read the room timeline (wallet-signed messages)",
+      parameters: [
+        { name: "slug", in: "path", required: true, schema: { type: "string" } },
+        { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } },
+        { name: "since", in: "query", schema: { type: "integer", description: "unix ms — only return messages with ts > since" } },
+      ],
+      responses: { "200": { description: "Messages" } },
+    },
+    post: {
+      tags: ["Rooms"],
+      summary: "Post a wallet-signed message",
+      description:
+        "Body: { address, body, body_type?, in_reply_to?, ts, signature }. Hold-to-chat enforced server-side via viem balanceOf when room has a gate. 200 msg/hr/sender/room rate limit.",
+      responses: { "200": { description: "Posted" }, "401": { description: "Bad signature" }, "403": { description: "Hold-to-chat: insufficient balance" } },
+    },
+  },
+  "/api/rooms/{slug}/gate-check": {
+    get: {
+      tags: ["Rooms"],
+      summary: "Preflight hold-to-chat eligibility for an address",
+      parameters: [
+        { name: "slug", in: "path", required: true, schema: { type: "string" } },
+        { name: "address", in: "query", required: true, schema: { type: "string" } },
+      ],
+      responses: { "200": { description: "Gate status + eligibility flag" } },
+    },
+  },
+  "/api/rooms/{slug}/holders": {
+    get: {
+      tags: ["Rooms"],
+      summary: "Top holders of a gated room ranked by gate-token balance (multicall balanceOf)",
+      parameters: [
+        { name: "slug", in: "path", required: true, schema: { type: "string" } },
+        { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+      ],
+      responses: { "200": { description: "Holder leaderboard" } },
+    },
+  },
+  "/api/rooms/{slug}/anchor": {
+    get: {
+      tags: ["Rooms"],
+      summary: "On-chain anchor status for a room — verify federation identity",
+      description:
+        "Reads SignaRoomRegistry on Base mainnet and cross-checks the on-chain manifestHash against keccak256(local signed_message). When match=true, federation can trust the room without trusting the serving node.",
+      parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "Anchor status" } },
+    },
+  },
+  "/api/rooms/{slug}/feed.atom": {
+    get: {
+      tags: ["Rooms"],
+      summary: "Atom 1.0 feed of the room's signed messages",
+      parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "Atom XML" } },
+    },
+  },
+  "/api/rooms/{slug}/feed.json": {
+    get: {
+      tags: ["Rooms"],
+      summary: "JSON Feed 1.1 of the room's signed messages (includes signature + preimage)",
+      parameters: [{ name: "slug", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "JSON Feed" } },
+    },
+  },
+
+  // ──────────────────────── v0.42+ — Partner room flows ────────────────────────
+
+  "/api/launches/{address}/room": {
+    post: {
+      tags: ["Partners"],
+      summary: "Lazy-create a wallet-signed SIGNA room for a Bankr-launched token",
+      parameters: [{ name: "address", in: "path", required: true, schema: { type: "string", description: "0x token address" } }],
+      responses: { "200": { description: "Room created or joined (idempotent on slug)" } },
+    },
+  },
+  "/api/launches/leaderboard": {
+    get: {
+      tags: ["Partners"],
+      summary: "Bankr token rooms ranked by 7d wallet-signed chat activity",
+      parameters: [{ name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 30 } }],
+      responses: { "200": { description: "Leaderboard" } },
+    },
+  },
+  "/api/bounties/{id}/room": {
+    post: {
+      tags: ["Partners"],
+      summary: "Lazy-create a wallet-signed SIGNA room for a gitlawb open bounty",
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "Room created or joined" } },
+    },
+  },
+  "/api/miroshark/{simId}/room": {
+    post: {
+      tags: ["Partners"],
+      summary: "Lazy-create a wallet-signed SIGNA room for a MiroShark sim verdict thread",
+      parameters: [{ name: "simId", in: "path", required: true, schema: { type: "string" } }],
+      responses: { "200": { description: "Room created or joined" } },
+    },
+  },
+  "/api/partners/aeon/directory": {
+    get: {
+      tags: ["Partners"],
+      summary: "ERC-8004 agent directory on Ethereum mainnet (multicall scan)",
+      parameters: [{ name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 50 } }],
+      responses: { "200": { description: "Directory entries" } },
+    },
+  },
+  "/api/partners/gitlawb/bounties": {
+    get: {
+      tags: ["Partners"],
+      summary: "Open gitlawb bounties sorted by payout size",
+      parameters: [{ name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 30 } }],
+      responses: { "200": { description: "Bounties" } },
+    },
+  },
+
+  // ──────────────────────────── v0.52+ — Receipts ────────────────────────────
+
+  "/api/receipts": {
+    get: {
+      tags: ["Receipts"],
+      summary: "Public ledger of wallet-signed activity per partner network",
+      responses: { "200": { description: "Cross-partner counts" } },
+    },
+  },
+
+  // ──────────────────────────── v0.56+ — Federation ────────────────────────────
+
+  "/api/nodes": {
+    get: {
+      tags: ["Network"],
+      summary: "List federated SIGNA nodes from SignaNodeRegistry on Base",
+      parameters: [
+        { name: "includeInactive", in: "query", schema: { type: "string", enum: ["0", "1"] } },
+        { name: "probe", in: "query", schema: { type: "string", enum: ["0", "1"], description: "Run live /api/node/info probe per peer" } },
+      ],
+      responses: { "200": { description: "Federated nodes" } },
+    },
+  },
+  "/api/anchor-config": {
+    get: {
+      tags: ["Network"],
+      summary: "Whether the SignaRoomRegistry is deployed + its address",
+      responses: { "200": { description: "Anchor config" } },
+    },
+  },
+
+  // ──────────────────────────── v0.59 — Search ────────────────────────────
+
+  "/api/search": {
+    get: {
+      tags: ["Network"],
+      summary: "Cross-room search — rooms + signed messages (ILIKE matching, address-aware)",
+      parameters: [
+        { name: "q", in: "query", required: true, schema: { type: "string", minLength: 2 } },
+        { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+      ],
+      responses: { "200": { description: "Hits per category" } },
     },
   },
 };
