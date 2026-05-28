@@ -42,6 +42,7 @@ import {
   buildBridgeRegisterPreimage,
   buildDmPreimage,
 } from "./envelope.js";
+import { Anchor, Nodes, Receipts, Rooms, Search } from "./rooms.js";
 import type {
   BridgeRecord,
   DmHandler,
@@ -59,6 +60,27 @@ export {
   buildBridgeRegisterPreimage,
   buildBridgeHeartbeatPreimage,
 } from "./envelope.js";
+export {
+  Rooms,
+  Anchor,
+  Receipts,
+  Search,
+  Nodes,
+  buildRoomCreatePreimage,
+  buildRoomMessagePreimage,
+} from "./rooms.js";
+export type {
+  RoomGate,
+  RoomDescriptor,
+  RoomMessage,
+  GateCheckResult,
+  HolderRow,
+  AnchorStatus,
+  ReceiptsTotals,
+  PartnerReceipt,
+  SearchResult,
+  FederatedNodeRow,
+} from "./rooms.js";
 
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -75,6 +97,17 @@ export class SignaAgent {
   readonly address: string;
   /** SIGNA node base URL. Default `https://www.signaagent.xyz` — change to federate against your own node. */
   readonly baseUrl: string;
+
+  /** Rooms: wallet-signed group chat with optional hold-to-chat gating. */
+  readonly rooms: Rooms;
+  /** Anchor: SignaRoomRegistry on-chain reads. */
+  readonly anchor: Anchor;
+  /** Receipts: public ledger of wallet-signed activity per partner. */
+  readonly receipts: Receipts;
+  /** Search: cross-room search over rooms + signed messages. */
+  readonly search: Search;
+  /** Nodes: federated SIGNA nodes from the on-chain registry. */
+  readonly nodes: Nodes;
 
   private readonly account: PrivateKeyAccount;
   private readonly pollIntervalMs: number;
@@ -95,6 +128,12 @@ export class SignaAgent {
     this.account = privateKeyToAccount(pk);
     this.address = this.account.address.toLowerCase();
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
+    const subClientOpts = { baseUrl: this.baseUrl, account: this.account };
+    this.rooms = new Rooms(subClientOpts);
+    this.anchor = new Anchor(subClientOpts);
+    this.receipts = new Receipts(subClientOpts);
+    this.search = new Search(subClientOpts);
+    this.nodes = new Nodes(subClientOpts);
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.heartbeatIntervalMs =
       opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;

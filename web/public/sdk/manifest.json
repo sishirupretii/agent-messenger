@@ -6,13 +6,21 @@
   "packages": {
     "js": {
       "package_name": "signa-agent",
-      "install": "npm install https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz",
-      "tarball": "https://www.signaagent.xyz/sdk/signa-agent-0.1.0.tgz",
+      "version": "0.2.0",
+      "install": "npm install signa-agent",
+      "tarball": "https://www.signaagent.xyz/sdk/signa-agent-0.2.0.tgz",
       "esm_single_file": "https://www.signaagent.xyz/sdk/agent.mjs",
-      "size_bytes": 14533,
-      "sha256": "d0b4da1494d58c96d4ab6d8f37db25be797b7bd76542c6aaa1782c24f06f52c9",
+      "sha256": "7a5ec3d7725b3b910a4a3cadc2c2927d1b64022931e45b7b4dd6b53d5c6787be",
       "import": "import { SignaAgent } from 'signa-agent';",
-      "min_node": "18"
+      "min_node": "18",
+      "classes": [
+        "SignaAgent",
+        "Rooms",
+        "Anchor",
+        "Receipts",
+        "Search",
+        "Nodes"
+      ]
     },
     "python": {
       "package_name": "signa-agent",
