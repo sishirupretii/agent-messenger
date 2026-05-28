@@ -3,6 +3,13 @@ import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { supabase } from "@/lib/supabase";
 import { CreateRoomDialog } from "./CreateRoomDialog";
+import { getRoomBadges, type RoomBadge } from "@/lib/room-badges";
+
+const BADGE_TONE: Record<RoomBadge["tone"], string> = {
+  accent: "border-[var(--accent)]/40 text-[var(--accent)]",
+  cyan: "border-cyan-300/40 text-cyan-300",
+  magenta: "border-fuchsia-300/40 text-fuchsia-300",
+};
 
 export const metadata = {
   title: "Rooms · SIGNA — self-hostable chat for humans and agents",
@@ -17,7 +24,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_SIGNA_BASE_URL ?? "https://www.signaage
 async function fetchRooms() {
   const { data } = await supabase
     .from("signa_rooms")
-    .select("id, name, slug, description, creator_address, ts, created_at")
+    .select("id, name, slug, description, creator_address, ts, created_at, gate_token_address")
     .eq("is_public", true)
     .order("created_at", { ascending: false })
     .limit(100);
@@ -90,28 +97,47 @@ export default async function RoomsPage() {
               </div>
             ) : (
               <div className="grid md:grid-cols-2 gap-4">
-                {rooms.map((r: any) => (
-                  <Link
-                    key={r.slug}
-                    href={`/rooms/${r.slug}`}
-                    className="block border border-white/10 hover:border-white/25 transition-colors rounded-sm p-5 bg-white/[0.02]"
-                  >
-                    <div className="flex items-baseline justify-between mb-1.5">
-                      <div className="font-display text-xl font-medium tracking-[-0.015em]">
-                        {r.name}
+                {rooms.map((r: any) => {
+                  const badges = getRoomBadges({
+                    slug: r.slug,
+                    gate_token_address: r.gate_token_address ?? null,
+                  });
+                  return (
+                    <Link
+                      key={r.slug}
+                      href={`/rooms/${r.slug}`}
+                      className="block border border-white/10 hover:border-white/25 transition-colors rounded-sm p-5 bg-white/[0.02]"
+                    >
+                      <div className="flex items-baseline justify-between mb-1.5 gap-2">
+                        <div className="font-display text-xl font-medium tracking-[-0.015em] truncate">
+                          {r.name}
+                        </div>
+                        <div className="text-[11px] font-mono text-white/40 whitespace-nowrap">#{r.slug}</div>
                       </div>
-                      <div className="text-[11px] font-mono text-white/40">#{r.slug}</div>
-                    </div>
-                    {r.description && (
-                      <p className="text-[13.5px] text-white/65 leading-relaxed mb-3 line-clamp-2">
-                        {r.description}
-                      </p>
-                    )}
-                    <div className="text-[11px] font-mono text-white/40">
-                      by {fmtAddr(r.creator_address)}
-                    </div>
-                  </Link>
-                ))}
+                      {badges.length > 0 && (
+                        <div className="flex gap-1.5 mb-2 flex-wrap">
+                          {badges.map((b) => (
+                            <span
+                              key={b.key}
+                              title={b.title}
+                              className={`text-[9.5px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border font-mono ${BADGE_TONE[b.tone]}`}
+                            >
+                              {b.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {r.description && (
+                        <p className="text-[13.5px] text-white/65 leading-relaxed mb-3 line-clamp-2">
+                          {r.description}
+                        </p>
+                      )}
+                      <div className="text-[11px] font-mono text-white/40">
+                        by {fmtAddr(r.creator_address)}
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </div>

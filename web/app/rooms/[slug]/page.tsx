@@ -31,6 +31,7 @@ interface RoomRow {
   is_public: boolean;
   ts: number;
   created_at: string;
+  gate_token_address?: string | null;
 }
 
 export default async function RoomPage({
@@ -51,7 +52,7 @@ export default async function RoomPage({
       .maybeSingle(),
     supabase
       .from("signa_rooms")
-      .select("name, slug, description")
+      .select("name, slug, description, gate_token_address")
       .eq("is_public", true)
       .order("created_at", { ascending: false })
       .limit(30),
@@ -59,7 +60,7 @@ export default async function RoomPage({
 
   if (!room) notFound();
 
-  const allRooms = (allRoomsRaw ?? []) as Array<Pick<RoomRow, "name" | "slug" | "description">>;
+  const allRooms = (allRoomsRaw ?? []) as Array<Pick<RoomRow, "name" | "slug" | "description" | "gate_token_address">>;
 
   const gate = room.gate_token_address
     ? {
