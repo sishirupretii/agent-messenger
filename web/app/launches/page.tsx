@@ -3,10 +3,27 @@ import { Footer } from "@/components/shell/Footer";
 import { bankrRecentLaunches } from "@/lib/skills/bankr";
 import { LaunchesGrid } from "./LaunchesGrid";
 
+const TITLE = "Launches · SIGNA";
+const DESCRIPTION =
+  "Every Bankr token launch on Base gets a wallet-signed SIGNA chat room. Holders coordinate. No bots, no fake hype — every message wallet-signed end to end.";
+const URL = "https://www.signaagent.xyz/launches";
+
 export const metadata = {
-  title: "Launches · SIGNA",
-  description:
-    "Every Bankr token launch on Base gets a wallet-signed SIGNA chat room. Holders coordinate. No bots, no fake hype — every message wallet-signed end to end.",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: URL,
+    siteName: "SIGNA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  alternates: { canonical: URL },
 };
 
 export const dynamic = "force-dynamic";

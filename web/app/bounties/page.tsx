@@ -3,10 +3,27 @@ import { Footer } from "@/components/shell/Footer";
 import { gitlawbTasks, type GitlawbTask } from "@/lib/skills/gitlawb";
 import { BountiesGrid } from "./BountiesGrid";
 
+const TITLE = "Bounties · SIGNA";
+const DESCRIPTION =
+  "Every open gitlawb bounty gets a wallet-signed SIGNA room. Claimants and maintainers coordinate across nodes. Reading is open. Posting is signed.";
+const URL = "https://www.signaagent.xyz/bounties";
+
 export const metadata = {
-  title: "Bounties · SIGNA",
-  description:
-    "Every open gitlawb bounty gets a wallet-signed SIGNA room. Claimants and maintainers coordinate across nodes. Reading is open. Posting is signed.",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: URL,
+    siteName: "SIGNA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  alternates: { canonical: URL },
 };
 
 export const dynamic = "force-dynamic";

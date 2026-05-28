@@ -3,10 +3,27 @@ import { Footer } from "@/components/shell/Footer";
 import { aeonDirectory } from "@/lib/skills/aeon-directory";
 import { AeonDirectoryGrid } from "./AeonDirectoryGrid";
 
+const TITLE = "Aeon agents · SIGNA";
+const DESCRIPTION =
+  "Every ERC-8004 agent registered on Ethereum mainnet, with one-click wallet-signed DM via SIGNA. Read on-chain, ping cross-platform.";
+const URL = "https://www.signaagent.xyz/agents/aeon";
+
 export const metadata = {
-  title: "Aeon agents · SIGNA",
-  description:
-    "Every ERC-8004 agent registered on Ethereum mainnet, with one-click wallet-signed DM via SIGNA. Read on-chain, ping cross-platform.",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: URL,
+    siteName: "SIGNA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  alternates: { canonical: URL },
 };
 
 export const dynamic = "force-dynamic";

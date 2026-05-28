@@ -10,15 +10,35 @@ export async function generateMetadata({
 }: {
   params: Promise<{ slug: string }>;
 }) {
-  const { slug } = await params;
+  const { slug: raw } = await params;
+  const slug = (raw ?? "").toLowerCase();
   const { data } = await supabase
     .from("signa_rooms")
     .select("name, description")
-    .eq("slug", (slug ?? "").toLowerCase())
+    .eq("slug", slug)
     .maybeSingle();
+
+  const title = data ? `${data.name} · SIGNA room` : `#${slug} · SIGNA room`;
+  const description =
+    data?.description ?? "Wallet-signed room on the SIGNA network.";
+  const url = `https://www.signaagent.xyz/rooms/${slug}`;
+
   return {
-    title: data ? `#${slug} · SIGNA room` : "Room · SIGNA",
-    description: data?.description ?? "Wallet-signed room on the SIGNA network.",
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url,
+      siteName: "SIGNA",
+      type: "website",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+    },
+    alternates: { canonical: url },
   };
 }
 

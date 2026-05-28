@@ -3,10 +3,27 @@ import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { supabase } from "@/lib/supabase";
 
+const TITLE = "MiroShark sims · SIGNA";
+const DESCRIPTION =
+  "Every completed MiroShark swarm simulation gets a wallet-signed SIGNA room. Verdict landed, then signed discussion thread opens. Reads stay open.";
+const URL = "https://www.signaagent.xyz/sims";
+
 export const metadata = {
-  title: "MiroShark sims · SIGNA",
-  description:
-    "Every completed MiroShark swarm simulation gets a wallet-signed SIGNA room. Verdict landed, then signed discussion thread opens. Reads stay open.",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: URL,
+    siteName: "SIGNA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  alternates: { canonical: URL },
 };
 
 export const dynamic = "force-dynamic";
