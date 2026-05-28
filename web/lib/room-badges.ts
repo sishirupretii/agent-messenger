@@ -17,10 +17,10 @@
  */
 
 export type RoomBadge = {
-  key: "bankr-launched" | "gitlawb-bounty" | "miroshark-sim";
+  key: "bankr-launched" | "gitlawb-bounty" | "miroshark-sim" | "anchored-base";
   label: string;
   shortLabel: string;
-  tone: "accent" | "cyan" | "magenta";
+  tone: "accent" | "cyan" | "magenta" | "green";
   title: string;
 };
 
