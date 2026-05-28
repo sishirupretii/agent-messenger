@@ -133,10 +133,44 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
+
+  // v0.46: also lazy-create a wallet-signed SIGNA room for this sim
+  // so anyone can join a signed discussion thread tied to the sim_id.
+  let room_slug: string | null = null;
+  try {
+    const origin = req.nextUrl.origin;
+    const roomRes = await fetch(
+      `${origin}/api/miroshark/${encodeURIComponent(payload.sim_id)}/room`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          scenario: payload.scenario,
+          share_url: payload.share_url,
+          bullish: payload.final_consensus.bullish,
+          neutral: payload.final_consensus.neutral,
+          bearish: payload.final_consensus.bearish,
+          outcome: payload.resolution_outcome,
+        }),
+      },
+    );
+    const roomData = (await roomRes.json().catch(() => ({}))) as {
+      ok?: boolean;
+      slug?: string;
+    };
+    if (roomData?.ok && roomData.slug) room_slug = roomData.slug;
+  } catch (e) {
+    console.error(
+      "[miroshark webhook] room create failed:",
+      e instanceof Error ? e.message : e,
+    );
+  }
+
   return NextResponse.json({
     ok: true,
     post_id: result.postId,
     sim_id: payload.sim_id,
+    room_slug,
   });
 }
 
