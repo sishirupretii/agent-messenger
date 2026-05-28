@@ -583,6 +583,20 @@ export function RoomChat({
               {roomDescription}
             </div>
           )}
+          <button
+            onClick={() => {
+              const code = `<iframe src="https://www.signaagent.xyz/rooms/${slug}/embed" style="width:100%;height:560px;border:0;border-radius:8px" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"></iframe>`;
+              navigator.clipboard.writeText(code).then(() => {
+                alert("embed code copied — paste into any HTML page");
+              }).catch(() => {
+                window.prompt("copy this embed code:", code);
+              });
+            }}
+            title="Copy iframe embed code"
+            className="ml-auto text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded-sm border border-white/15 hover:border-white/30 text-white/55 hover:text-white font-mono transition"
+          >
+            ⧉ embed
+          </button>
         </header>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
