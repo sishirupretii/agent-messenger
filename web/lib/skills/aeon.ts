@@ -134,22 +134,33 @@ export async function aeonAgentRegistration(
   try {
     const id = typeof tokenId === "bigint" ? tokenId : BigInt(tokenId);
     const c = client(network);
-    const [uri, owner] = await Promise.all([
-      c.readContract({
+
+    // ownerOf() is the required call — if it reverts, the token isn't
+    // minted and we genuinely have nothing to return.
+    const owner = (await c.readContract({
+      address: IDENTITY_REGISTRY[network],
+      abi: IDENTITY_ABI,
+      functionName: "ownerOf",
+      args: [id],
+    })) as Address;
+
+    // agentURI() is an ERC-8004 extension. Many agents are minted
+    // without their URI being set yet (early adopters on mainnet).
+    // Tolerate a revert / missing URI — fall back to empty string and
+    // null registration JSON instead of 404'ing the whole page.
+    let uri = "";
+    try {
+      uri = (await c.readContract({
         address: IDENTITY_REGISTRY[network],
         abi: IDENTITY_ABI,
         functionName: "agentURI",
         args: [id],
-      }) as Promise<string>,
-      c.readContract({
-        address: IDENTITY_REGISTRY[network],
-        abi: IDENTITY_ABI,
-        functionName: "ownerOf",
-        args: [id],
-      }) as Promise<Address>,
-    ]);
+      })) as string;
+    } catch {
+      // agent registered on-chain but no agentURI metadata published yet
+    }
 
-    const registration = await resolveRegistration(uri);
+    const registration = uri ? await resolveRegistration(uri) : null;
     return { tokenId: id, owner, uri, registration };
   } catch (e) {
     console.error(
