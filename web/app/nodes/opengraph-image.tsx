@@ -76,8 +76,8 @@ export default async function Image() {
             <div style={{ color: "#888", fontSize: 14, letterSpacing: 1 }}>
               registry
             </div>
-            <div style={{ color: "#ddd", fontSize: 14, fontFamily: "monospace" }}>
-              {SIGNA_NODE_REGISTRY.slice(0, 10)}…{SIGNA_NODE_REGISTRY.slice(-8)}
+            <div style={{ color: "#ddd", fontSize: 14, fontFamily: "monospace", display: "flex" }}>
+              {`${SIGNA_NODE_REGISTRY.slice(0, 10)}…${SIGNA_NODE_REGISTRY.slice(-8)}`}
             </div>
           </div>
         </div>
