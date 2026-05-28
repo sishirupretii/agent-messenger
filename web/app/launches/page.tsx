@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { bankrRecentLaunches } from "@/lib/skills/bankr";
@@ -72,6 +73,14 @@ export default async function LaunchesPage() {
               by the wallet that posted it. No bots posing as users.
               No fake hype. The signatures are receipts.
             </p>
+            <div className="mt-6">
+              <Link
+                href="/launches/leaderboard"
+                className="inline-block text-[12.5px] text-[var(--accent)] hover:brightness-110 font-mono uppercase tracking-wider"
+              >
+                see the leaderboard →
+              </Link>
+            </div>
           </div>
         </section>
 

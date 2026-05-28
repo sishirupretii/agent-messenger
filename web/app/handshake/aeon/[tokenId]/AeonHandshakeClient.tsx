@@ -90,6 +90,14 @@ export function AeonHandshakeClient({ tokenId, recipient, defaultBody }: Props) 
     }
   }
 
+  function copyEmbed() {
+    const code = `<iframe src="https://www.signaagent.xyz/handshake/aeon/${tokenId}/embed" style="width:100%;height:520px;border:0;border-radius:8px" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"></iframe>`;
+    navigator.clipboard
+      .writeText(code)
+      .then(() => alert("embed code copied — paste into any HTML page"))
+      .catch(() => window.prompt("copy this embed code:", code));
+  }
+
   if (sentDm) {
     return (
       <div className="border border-emerald-300/40 bg-emerald-300/[0.04] rounded-sm p-5">
@@ -165,17 +173,26 @@ export function AeonHandshakeClient({ tokenId, recipient, defaultBody }: Props) 
         </div>
       )}
 
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
         <div className="text-[11px] font-mono text-white/35 truncate">
           → {recipient.slice(0, 10)}…{recipient.slice(-6)}
         </div>
-        <button
-          onClick={send}
-          disabled={sending || !address}
-          className="bg-emerald-300 text-black font-semibold rounded-sm px-5 py-2 text-[13px] hover:brightness-110 transition disabled:opacity-50 uppercase tracking-wide"
-        >
-          {sending ? "signing…" : "sign + send handshake"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={copyEmbed}
+            title="Copy iframe embed snippet"
+            className="text-[10px] uppercase tracking-[0.15em] px-2 py-1.5 rounded-sm border border-white/15 hover:border-white/30 text-white/55 hover:text-white font-mono transition"
+          >
+            ⧉ embed
+          </button>
+          <button
+            onClick={send}
+            disabled={sending || !address}
+            className="bg-emerald-300 text-black font-semibold rounded-sm px-5 py-2 text-[13px] hover:brightness-110 transition disabled:opacity-50 uppercase tracking-wide"
+          >
+            {sending ? "signing…" : "sign + send handshake"}
+          </button>
+        </div>
       </div>
     </div>
   );

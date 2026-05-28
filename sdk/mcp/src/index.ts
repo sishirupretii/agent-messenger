@@ -567,6 +567,69 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "signa_room_holders",
+    description:
+      "List the top holders of a hold-to-chat gated SIGNA room. Multicalls balanceOf on the gate token contract for every wallet that's posted in the room, sorts desc, returns the leaderboard. Use to surface who actually holds the token vs who just talks.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description: "The room slug.",
+          pattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
+        },
+        limit: {
+          type: "integer",
+          description: "Max holders to return. Default 10, max 50.",
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_search",
+    description:
+      "Search across every public SIGNA room and signed message. Matches room name / slug / description and message body. If the query is a 0x address it also does an exact-match against sender / creator / gate token. Returns rooms + messages, capped at 20 each.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search term. Min 2 chars. Can be a token symbol, slug, 0x address, or phrase.",
+          minLength: 2,
+        },
+        limit: {
+          type: "integer",
+          description: "Max hits per category (rooms + messages). Default 20, max 50.",
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_anchor_room",
+    description:
+      "Look up whether a SIGNA room is anchored on the SignaRoomRegistry contract on Base mainnet, and whether the on-chain manifest hash matches the local signed manifest. Use to verify a room's federation identity without trusting the serving node.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description: "The room slug to check.",
+          pattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
+        },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -1371,6 +1434,130 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `sim id:  ${simId}`,
           `URL:     ${SIGNA_BASE}/rooms/${data.slug}`,
         ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      // ─────────────────── v0.6.0 — holders / search / anchor ───────────────────
+
+      case "signa_room_holders": {
+        const slug = String(args.slug ?? "").toLowerCase().trim();
+        const limit = Math.min(Math.max(Number(args.limit ?? 10), 1), 50);
+        if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(slug)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid slug");
+        }
+        const r = await fetch(
+          `${SIGNA_BASE}/api/rooms/${slug}/holders?limit=${limit}`,
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `holders failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        if (!data.gated) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `#${slug} is not a hold-to-chat room — no holder leaderboard.`,
+              },
+            ],
+          };
+        }
+        const holders = (data.holders ?? []) as Array<{
+          address: string;
+          balance: string;
+        }>;
+        const lines = [
+          `#${slug} — top ${holders.length} holders of $${data.token?.symbol ?? "?"}`,
+          ``,
+        ];
+        if (holders.length === 0) {
+          lines.push("  no posters with a balance yet.");
+        }
+        for (let i = 0; i < holders.length; i++) {
+          const h = holders[i];
+          lines.push(
+            `  ${String(i + 1).padStart(2)}. ${h.address.slice(0, 10)}…${h.address.slice(-6)}  ${h.balance}`,
+          );
+        }
+        lines.push("", `Room URL: ${SIGNA_BASE}/rooms/${slug}`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_search": {
+        const query = String(args.query ?? "").trim();
+        const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 50);
+        if (query.length < 2) {
+          throw new McpError(ErrorCode.InvalidParams, "query min 2 chars");
+        }
+        const r = await fetch(
+          `${SIGNA_BASE}/api/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `search failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const rooms = (data.rooms ?? []) as Array<Record<string, unknown>>;
+        const messages = (data.messages ?? []) as Array<
+          Record<string, unknown>
+        >;
+        const lines = [`search "${query}" — ${rooms.length} rooms · ${messages.length} messages`, ""];
+        if (rooms.length > 0) {
+          lines.push("rooms:");
+          for (const r of rooms) {
+            lines.push(
+              `  #${r.slug}  ${r.name}${r.gate_token_symbol ? `  $${r.gate_token_symbol}` : ""}`,
+            );
+          }
+          lines.push("");
+        }
+        if (messages.length > 0) {
+          lines.push("messages:");
+          for (const m of messages) {
+            const from = String(m.from_address ?? "");
+            const body = String(m.body ?? "").replace(/\s+/g, " ").slice(0, 120);
+            lines.push(
+              `  #${m.room_slug}  ${from.slice(0, 10)}…${from.slice(-6)}  ${body}`,
+            );
+          }
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_anchor_room": {
+        const slug = String(args.slug ?? "").toLowerCase().trim();
+        if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(slug)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid slug");
+        }
+        const r = await fetch(`${SIGNA_BASE}/api/rooms/${slug}/anchor`);
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `anchor lookup failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const lines = [
+          `#${slug} anchor status`,
+          ``,
+          `contract:   ${data.contract ?? "(not deployed)"}`,
+          `anchored:   ${data.anchored ? "yes" : "no"}`,
+          `match:      ${data.match ? "yes" : "no"}`,
+        ];
+        if (data.local) {
+          lines.push(``, `local manifest hash:  ${data.local.manifestHash ?? "—"}`);
+          lines.push(`local creator:        ${data.local.creator ?? "—"}`);
+        }
+        if (data.onchain) {
+          lines.push(``, `onchain manifest hash: ${data.onchain.manifestHash}`);
+          lines.push(`onchain creator:       ${data.onchain.creator}`);
+          lines.push(`onchain anchoredAt:    ${data.onchain.anchoredAt}`);
+        }
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
