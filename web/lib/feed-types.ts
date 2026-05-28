@@ -287,6 +287,16 @@ export type SignedAction =
       slug: string;
       description?: string;
       is_public: boolean;
+      /**
+       * Optional hold-to-chat gate. When present, only wallets holding
+       * >= gate_min_balance_raw of gate_token_address on gate_chain may
+       * post into the room. Reads stay open. Backwards-compatible —
+       * envelopes without these fields produce a byte-identical preimage
+       * to v0.39 so old signatures still verify.
+       */
+      gate_token_address?: string;
+      gate_chain?: string;
+      gate_min_balance_raw?: string;
       ts: number;
     }
   | {
@@ -497,8 +507,22 @@ export function buildMessageToSign(action: SignedAction): string {
         `I am taking this bridge offline. SIGNA may purge or hide it.`,
       ].join("\n");
     case "signa_room_create": {
+      // v0.50: optional hold-to-chat gate. Gate lines are ONLY appended
+      // when set so v0.39 envelopes without gating stay byte-identical
+      // and old signatures continue to verify.
       const opt: string[] = [];
       if (action.description) opt.push(`description:${action.description}`);
+      if (
+        action.gate_token_address &&
+        action.gate_chain &&
+        action.gate_min_balance_raw
+      ) {
+        opt.push(
+          `gate_token:${action.gate_token_address.toLowerCase()}`,
+          `gate_chain:${action.gate_chain.toLowerCase()}`,
+          `gate_min:${action.gate_min_balance_raw}`,
+        );
+      }
       return [
         `SIGNA room create v1`,
         `ts:${action.ts}`,

@@ -7,6 +7,12 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 
+interface GateArgs {
+  token: string; // 0x...
+  chain: string; // base | ethereum
+  minRaw: string; // uint256 string
+}
+
 function buildRoomCreatePreimage(args: {
   ts: number;
   address: string;
@@ -14,9 +20,17 @@ function buildRoomCreatePreimage(args: {
   slug: string;
   description?: string;
   is_public: boolean;
+  gate?: GateArgs;
 }) {
   const opt: string[] = [];
   if (args.description) opt.push(`description:${args.description}`);
+  if (args.gate) {
+    opt.push(
+      `gate_token:${args.gate.token.toLowerCase()}`,
+      `gate_chain:${args.gate.chain.toLowerCase()}`,
+      `gate_min:${args.gate.minRaw}`,
+    );
+  }
   return [
     "SIGNA room create v1",
     `ts:${args.ts}`,
@@ -37,6 +51,10 @@ export function CreateRoomDialog() {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
+  const [gateEnabled, setGateEnabled] = useState(false);
+  const [gateToken, setGateToken] = useState("");
+  const [gateChain, setGateChain] = useState<"base" | "ethereum">("base");
+  const [gateMin, setGateMin] = useState("1"); // human units, converted to raw using 18 dec default
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +79,33 @@ export function CreateRoomDialog() {
       setError("Description must be 0-500 chars.");
       return;
     }
+
+    // Optional hold-to-chat gate. We send the human-readable min balance
+    // through to the server which fetches real decimals on-chain — to
+    // keep the signed preimage canonical we convert to raw uint256 here
+    // assuming 18 decimals (the standard for ERC-20s on Base / Ethereum).
+    // The server cross-checks decimals on-chain but does NOT renegotiate
+    // the gate amount; min is always treated as the raw uint256 the
+    // signer committed to.
+    let gate: GateArgs | undefined;
+    if (gateEnabled) {
+      const t = gateToken.toLowerCase().trim();
+      if (!/^0x[a-f0-9]{40}$/.test(t)) {
+        setError("Gate token must be a valid 0x address.");
+        return;
+      }
+      const min = gateMin.trim();
+      if (!/^\d+(\.\d+)?$/.test(min) || Number(min) <= 0) {
+        setError("Gate min must be a positive number.");
+        return;
+      }
+      // Convert human units → raw uint256 assuming 18 decimals.
+      const [whole, frac = ""] = min.split(".");
+      const padded = (frac + "0".repeat(18)).slice(0, 18);
+      const raw = (BigInt(whole) * 10n ** 18n + BigInt(padded || "0")).toString();
+      gate = { token: t, chain: gateChain, minRaw: raw };
+    }
+
     setSubmitting(true);
     try {
       const ts = Date.now();
@@ -71,6 +116,7 @@ export function CreateRoomDialog() {
         slug: cleanSlug,
         description: cleanDesc || undefined,
         is_public: true,
+        gate,
       });
       const signature = await walletClient.signMessage({ message });
       const r = await fetch("/api/rooms", {
@@ -84,6 +130,13 @@ export function CreateRoomDialog() {
           is_public: true,
           ts,
           signature,
+          ...(gate
+            ? {
+                gate_token_address: gate.token,
+                gate_chain: gate.chain,
+                gate_min_balance_raw: gate.minRaw,
+              }
+            : {}),
         }),
       });
       const data = await r.json().catch(() => ({}));
@@ -170,6 +223,70 @@ export function CreateRoomDialog() {
               placeholder="what is this room about"
             />
             <div className="text-[11px] text-white/35 mt-1">{description.length} / 500</div>
+          </div>
+
+          <div className="border-t border-white/[0.06] pt-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={gateEnabled}
+                onChange={(e) => setGateEnabled(e.target.checked)}
+                className="accent-[var(--accent)]"
+              />
+              <span className="text-[12.5px] text-white/80">
+                hold-to-chat — gate posting by an ERC-20
+              </span>
+            </label>
+            {gateEnabled && (
+              <div className="mt-3 space-y-3 pl-6 border-l border-[var(--accent)]/30">
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1.5">
+                    gate token address
+                  </div>
+                  <input
+                    type="text"
+                    value={gateToken}
+                    onChange={(e) => setGateToken(e.target.value)}
+                    placeholder="0x…"
+                    spellCheck={false}
+                    className="w-full font-mono text-[12.5px] bg-black/40 border border-white/10 rounded-sm px-3 py-2 text-white focus:outline-none focus:border-white/30"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1.5">
+                      chain
+                    </div>
+                    <select
+                      value={gateChain}
+                      onChange={(e) => setGateChain(e.target.value as "base" | "ethereum")}
+                      className="w-full text-[13px] bg-black/40 border border-white/10 rounded-sm px-3 py-2 text-white focus:outline-none focus:border-white/30"
+                    >
+                      <option value="base">base</option>
+                      <option value="ethereum">ethereum</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1.5">
+                      min balance (token units)
+                    </div>
+                    <input
+                      type="text"
+                      value={gateMin}
+                      onChange={(e) => setGateMin(e.target.value)}
+                      placeholder="1"
+                      className="w-full font-mono text-[13px] bg-black/40 border border-white/10 rounded-sm px-3 py-2 text-white focus:outline-none focus:border-white/30"
+                    />
+                  </div>
+                </div>
+                <div className="text-[11px] text-white/40 leading-relaxed">
+                  posters need to hold at least this amount of the token on
+                  the chosen chain. anyone reads. converted assuming 18
+                  decimals — the server records the on-chain symbol +
+                  decimals on create.
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
