@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useAccount, useWalletClient } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { getRoomBadges, type RoomBadge } from "@/lib/room-badges";
 
 interface RoomMessage {
   id: string;
@@ -20,7 +21,15 @@ interface RoomLink {
   name: string;
   slug: string;
   description: string | null;
+  gate_token_address?: string | null;
 }
+
+const TONE_STYLE: Record<RoomBadge["tone"], string> = {
+  accent:
+    "border-[var(--accent)]/40 text-[var(--accent)]",
+  cyan: "border-cyan-300/40 text-cyan-300",
+  magenta: "border-fuchsia-300/40 text-fuchsia-300",
+};
 
 interface RoomGate {
   tokenAddress: string;
@@ -456,20 +465,35 @@ export function RoomChat({
         <div className="p-4">
           <div className="text-[10px] uppercase tracking-[0.18em] text-white/40 mb-3">rooms</div>
           <div className="space-y-0.5">
-            {rooms.map((r) => (
-              <Link
-                key={r.slug}
-                href={`/rooms/${r.slug}`}
-                className={`block px-2.5 py-1.5 rounded-sm text-[13.5px] truncate ${
-                  r.slug === slug
-                    ? "bg-white/[0.08] text-white"
-                    : "text-white/65 hover:text-white hover:bg-white/[0.03]"
-                }`}
-              >
-                <span className="text-white/40">#</span>
-                {r.slug}
-              </Link>
-            ))}
+            {rooms.map((r) => {
+              const badges = getRoomBadges({
+                slug: r.slug,
+                gate_token_address: r.gate_token_address ?? null,
+              });
+              const b = badges[0] ?? null;
+              return (
+                <Link
+                  key={r.slug}
+                  href={`/rooms/${r.slug}`}
+                  className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm text-[13.5px] ${
+                    r.slug === slug
+                      ? "bg-white/[0.08] text-white"
+                      : "text-white/65 hover:text-white hover:bg-white/[0.03]"
+                  }`}
+                  title={b?.title ?? r.description ?? r.name}
+                >
+                  <span className="text-white/40">#</span>
+                  <span className="truncate flex-1">{r.slug}</span>
+                  {b && (
+                    <span
+                      className={`text-[8.5px] uppercase tracking-wider font-mono px-1 rounded-sm border ${TONE_STYLE[b.tone]} opacity-70 group-hover:opacity-100`}
+                    >
+                      {b.shortLabel}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
           </div>
           <div className="mt-4 pt-3 border-t border-white/[0.06]">
             <Link
@@ -484,9 +508,18 @@ export function RoomChat({
 
       {/* Center: chat */}
       <div className="bg-[#0a0a0f] flex flex-col min-h-0">
-        <header className="border-b border-white/[0.06] px-5 py-3 flex items-baseline gap-3">
+        <header className="border-b border-white/[0.06] px-5 py-3 flex items-baseline gap-2 flex-wrap">
           <div className="text-white/40 text-[16px]">#</div>
           <div className="font-display text-[19px] font-medium tracking-[-0.015em]">{roomName}</div>
+          {getRoomBadges({ slug, gate_token_address: gate?.tokenAddress ?? null }).map((b) => (
+            <span
+              key={b.key}
+              title={b.title}
+              className={`text-[10px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border font-mono ${TONE_STYLE[b.tone]}`}
+            >
+              {b.label}
+            </span>
+          ))}
           {gate && (
             <span
               title={`Hold-to-chat · ${fmtMin(gate.minBalanceRaw, gate.decimals)} $${gate.symbol} on ${gate.chain}`}
