@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { getPartnerReceipts, type PartnerKey } from "@/lib/receipts";
@@ -103,16 +104,17 @@ export default async function ReceiptsPage() {
           <div className="max-w-6xl mx-auto px-6 lg:px-10 py-10">
             <div className="grid md:grid-cols-2 gap-4">
               {receipts.map((r) => (
-                <div
+                <Link
                   key={r.partner}
-                  className={`border rounded-sm bg-white/[0.02] p-5 hover:bg-white/[0.04] transition-colors ${TONE[r.partner]}`}
+                  href={`/receipts/${r.partner}`}
+                  className={`block border rounded-sm bg-white/[0.02] p-5 hover:bg-white/[0.04] transition-colors ${TONE[r.partner]}`}
                 >
                   <div className="flex items-baseline justify-between mb-2 gap-3">
                     <div className="font-display text-2xl font-medium tracking-[-0.015em] text-white">
                       {r.label}
                     </div>
                     <div className={`text-[10px] uppercase tracking-[0.18em] font-mono ${TONE[r.partner]}`}>
-                      {r.partner}
+                      {r.partner} →
                     </div>
                   </div>
                   <p className="text-[13px] text-white/55 leading-relaxed mb-5">
@@ -132,7 +134,7 @@ export default async function ReceiptsPage() {
                       sub=""
                     />
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           </div>

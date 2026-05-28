@@ -181,3 +181,154 @@ function classify(r: {
 export function clearReceiptsCache() {
   cache = null;
 }
+
+export type PartnerRoomRow = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  creator_address: string;
+  created_at: string;
+  message_count: number;
+  last_message_ts: number | null;
+};
+
+export type PartnerMessageRow = {
+  id: string;
+  room_id: string;
+  room_slug: string;
+  from_address: string;
+  body: string;
+  ts: number;
+  signature: string;
+};
+
+export type PartnerDetail = {
+  partner: PartnerKey;
+  label: string;
+  description: string;
+  rooms: PartnerRoomRow[];
+  recent_messages: PartnerMessageRow[];
+  totals: {
+    rooms: number;
+    messages: number;
+    unique_posters: number;
+  };
+};
+
+const detailCache = new Map<PartnerKey, { ts: number; data: PartnerDetail }>();
+
+/**
+ * Per-partner deep view — every room belonging to the partner network
+ * plus the most recent signed messages across those rooms. Used by
+ * /receipts/[partner] for outreach pages.
+ */
+export async function getPartnerDetail(
+  partner: PartnerKey,
+): Promise<PartnerDetail> {
+  const cached = detailCache.get(partner);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  // Pull all rooms; classification matches the public badge logic.
+  const { data: rawRooms } = await supabase
+    .from("signa_rooms")
+    .select(
+      "id, slug, name, description, creator_address, gate_token_address, created_at",
+    )
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  const myRooms = (rawRooms ?? []).filter((r) => classify(r) === partner);
+  const roomIds = myRooms.map((r) => r.id);
+  const slugById = new Map(myRooms.map((r) => [r.id, r.slug]));
+
+  if (roomIds.length === 0) {
+    const empty: PartnerDetail = {
+      partner,
+      label: PARTNER_LABEL[partner],
+      description: PARTNER_DESCRIPTION[partner],
+      rooms: [],
+      recent_messages: [],
+      totals: { rooms: 0, messages: 0, unique_posters: 0 },
+    };
+    detailCache.set(partner, { ts: Date.now(), data: empty });
+    return empty;
+  }
+
+  const { data: rawMessages } = await supabase
+    .from("signa_room_messages")
+    .select("id, room_id, from_address, body, ts, signature")
+    .in("room_id", roomIds)
+    .order("ts", { ascending: false })
+    .limit(500);
+
+  // Aggregate per room
+  const perRoom = new Map<
+    string,
+    { count: number; lastTs: number | null }
+  >();
+  const posters = new Set<string>();
+  for (const m of rawMessages ?? []) {
+    const tsMs = typeof m.ts === "number" ? m.ts : Number(m.ts);
+    const cur = perRoom.get(m.room_id) ?? { count: 0, lastTs: null };
+    cur.count += 1;
+    if (Number.isFinite(tsMs)) {
+      cur.lastTs = cur.lastTs === null ? tsMs : Math.max(cur.lastTs, tsMs);
+    }
+    perRoom.set(m.room_id, cur);
+    posters.add(String(m.from_address).toLowerCase());
+  }
+
+  const rooms: PartnerRoomRow[] = myRooms.map((r) => {
+    const agg = perRoom.get(r.id) ?? { count: 0, lastTs: null };
+    return {
+      id: r.id,
+      slug: r.slug,
+      name: r.name,
+      description: r.description,
+      creator_address: r.creator_address,
+      created_at: r.created_at,
+      message_count: agg.count,
+      last_message_ts: agg.lastTs,
+    };
+  });
+  // Sort rooms by latest message activity desc, falling back to created_at.
+  rooms.sort((a, b) => {
+    const tA = a.last_message_ts ?? Date.parse(a.created_at);
+    const tB = b.last_message_ts ?? Date.parse(b.created_at);
+    return tB - tA;
+  });
+
+  const recent_messages: PartnerMessageRow[] = (rawMessages ?? [])
+    .slice(0, 30)
+    .map((m) => ({
+      id: m.id,
+      room_id: m.room_id,
+      room_slug: slugById.get(m.room_id) ?? "",
+      from_address: m.from_address,
+      body: m.body,
+      ts: typeof m.ts === "number" ? m.ts : Number(m.ts),
+      signature: m.signature,
+    }));
+
+  const data: PartnerDetail = {
+    partner,
+    label: PARTNER_LABEL[partner],
+    description: PARTNER_DESCRIPTION[partner],
+    rooms,
+    recent_messages,
+    totals: {
+      rooms: rooms.length,
+      messages: rawMessages?.length ?? 0,
+      unique_posters: posters.size,
+    },
+  };
+  detailCache.set(partner, { ts: Date.now(), data });
+  return data;
+}
+
+export function isPartnerKey(s: string): s is PartnerKey {
+  return ["bankr", "gitlawb", "miroshark", "aeon", "community"].includes(s);
+}
