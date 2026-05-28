@@ -29,7 +29,10 @@ const TONE_STYLE: Record<RoomBadge["tone"], string> = {
     "border-[var(--accent)]/40 text-[var(--accent)]",
   cyan: "border-cyan-300/40 text-cyan-300",
   magenta: "border-fuchsia-300/40 text-fuchsia-300",
+  green: "border-emerald-300/40 text-emerald-300",
 };
+
+const ANCHOR_RECHECK_MS = 60_000;
 
 interface RoomGate {
   tokenAddress: string;
@@ -285,6 +288,11 @@ export function RoomChat({
     eligible: boolean;
     held: string | null;
   }>({ checked: false, eligible: !gate, held: null });
+  const [anchor, setAnchor] = useState<{
+    anchored: boolean;
+    match: boolean;
+    contract: string | null;
+  }>({ anchored: false, match: false, contract: null });
   const lastTsRef = useRef<number>(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -344,6 +352,32 @@ export function RoomChat({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages.length]);
+
+  // On-chain anchor preflight (v0.51). Polls the registry every 60s so a
+  // freshly-anchored room flips the badge without a refresh. Read-only.
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const r = await fetch(`/api/rooms/${slug}/anchor`, { cache: "no-store" });
+        const d = await r.json().catch(() => ({}));
+        if (cancelled || !d?.ok) return;
+        setAnchor({
+          anchored: !!d.anchored,
+          match: !!d.match,
+          contract: d.contract ?? null,
+        });
+      } catch {
+        // swallow
+      }
+    }
+    poll();
+    const id = setInterval(poll, ANCHOR_RECHECK_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [slug]);
 
   // Gate preflight (v0.43). Re-runs whenever the connected wallet changes
   // and every 30s after that so freshly-bought holders can post without
@@ -526,6 +560,22 @@ export function RoomChat({
               className="text-[10px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border border-[var(--accent)]/40 text-[var(--accent)] font-mono"
             >
               hold ${gate.symbol} to chat
+            </span>
+          )}
+          {anchor.anchored && anchor.match && (
+            <span
+              title="Room manifest hash is anchored on Base mainnet and matches what this node serves. Federation can verify this room without trusting our server."
+              className={`text-[10px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border font-mono ${TONE_STYLE.green}`}
+            >
+              anchored on base
+            </span>
+          )}
+          {anchor.anchored && !anchor.match && (
+            <span
+              title="Room is anchored on-chain but this node's signed manifest hash does NOT match. Treat with caution — could be a fork or a node serving stale data."
+              className="text-[10px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border border-red-400/40 text-red-300 font-mono"
+            >
+              anchor mismatch
             </span>
           )}
           {roomDescription && (

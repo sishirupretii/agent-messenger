@@ -9,6 +9,7 @@ const BADGE_TONE: Record<RoomBadge["tone"], string> = {
   accent: "border-[var(--accent)]/40 text-[var(--accent)]",
   cyan: "border-cyan-300/40 text-cyan-300",
   magenta: "border-fuchsia-300/40 text-fuchsia-300",
+  green: "border-emerald-300/40 text-emerald-300",
 };
 
 export const metadata = {
