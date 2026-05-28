@@ -383,7 +383,7 @@ const TOOLS = [
   {
     name: "signa_room_create",
     description:
-      "Create a new public wallet-signed chat room on the SIGNA network. The agent's wallet becomes the room creator. Anyone with a wallet can then post wallet-signed messages into the room. Rooms are federated across SIGNA nodes by default.",
+      "Create a new public wallet-signed chat room on the SIGNA network. The agent's wallet becomes the room creator. Anyone with a wallet can post wallet-signed messages into the room. Rooms are federated across SIGNA nodes by default. Optional hold-to-chat gating restricts posting to wallets holding a specified ERC-20 amount on Base or Ethereum.",
     inputSchema: {
       type: "object",
       properties: {
@@ -402,6 +402,21 @@ const TOOLS = [
           type: "string",
           description: "Optional description, up to 500 chars.",
           maxLength: 500,
+        },
+        gate_token_address: {
+          type: "string",
+          description: "Optional hold-to-chat — ERC-20 contract address. 0x...40hex. When set, gate_chain and gate_min_balance_raw must also be set.",
+          pattern: "^0x[a-fA-F0-9]{40}$",
+        },
+        gate_chain: {
+          type: "string",
+          description: "Chain for the gate token. base | ethereum.",
+          enum: ["base", "ethereum"],
+        },
+        gate_min_balance_raw: {
+          type: "string",
+          description: "Minimum balance required to post, as a uint256 string in the token's smallest units. For an 18-decimal token, '1000000000000000000' = 1 whole token.",
+          pattern: "^[1-9][0-9]*$",
         },
       },
       required: ["name", "slug"],
@@ -996,9 +1011,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             "slug must be lowercase a-z 0-9 + dashes, 3-32 chars, start and end alphanumeric",
           );
         }
+
+        // v0.50 — optional hold-to-chat gate (all three or none).
+        const gateToken = args.gate_token_address
+          ? String(args.gate_token_address).toLowerCase().trim()
+          : undefined;
+        const gateChain = args.gate_chain
+          ? String(args.gate_chain).toLowerCase().trim()
+          : undefined;
+        const gateMin = args.gate_min_balance_raw
+          ? String(args.gate_min_balance_raw).trim()
+          : undefined;
+        const gateSet = !!gateToken && !!gateChain && !!gateMin;
+        const gatePartial =
+          (!!gateToken || !!gateChain || !!gateMin) && !gateSet;
+        if (gatePartial) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "gate_token_address, gate_chain, and gate_min_balance_raw must be set together",
+          );
+        }
+        if (gateToken && !/^0x[a-f0-9]{40}$/.test(gateToken)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid gate_token_address");
+        }
+        if (gateChain && !["base", "ethereum"].includes(gateChain)) {
+          throw new McpError(ErrorCode.InvalidParams, "gate_chain must be base | ethereum");
+        }
+        if (gateMin) {
+          try {
+            if (BigInt(gateMin) <= 0n) throw new Error("non-positive");
+          } catch {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "gate_min_balance_raw must be a positive uint256 string",
+            );
+          }
+        }
+
         const ts = Date.now();
         const optLines: string[] = [];
         if (description) optLines.push(`description:${description}`);
+        if (gateSet) {
+          optLines.push(
+            `gate_token:${gateToken}`,
+            `gate_chain:${gateChain}`,
+            `gate_min:${gateMin}`,
+          );
+        }
         const message = [
           "SIGNA room create v1",
           `ts:${ts}`,
@@ -1020,6 +1079,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             is_public: true,
             ts,
             signature,
+            ...(gateSet
+              ? {
+                  gate_token_address: gateToken,
+                  gate_chain: gateChain,
+                  gate_min_balance_raw: gateMin,
+                }
+              : {}),
           }),
         });
         const data = await safeJson(r);
@@ -1030,17 +1096,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           );
         }
         const room = data.room;
-        const text = [
+        const lines = [
           `Room created: #${room.slug}`,
           ``,
           `name:     ${room.name}`,
           `slug:     ${room.slug}`,
           `creator:  ${room.creator_address}`,
-          ...(room.description ? [`desc:     ${room.description}`] : []),
-          ``,
-          `URL:    ${SIGNA_BASE}/rooms/${room.slug}`,
-        ].join("\n");
-        return { content: [{ type: "text", text }] };
+        ];
+        if (room.description) lines.push(`desc:     ${room.description}`);
+        if (room.gate_token_address) {
+          lines.push(
+            ``,
+            `hold-to-chat:`,
+            `  token:   ${room.gate_token_symbol ?? "?"} (${room.gate_token_address})`,
+            `  chain:   ${room.gate_chain}`,
+            `  min:     ${room.gate_min_balance_raw} raw`,
+          );
+        }
+        lines.push(``, `URL:    ${SIGNA_BASE}/rooms/${room.slug}`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
       case "signa_room_send": {

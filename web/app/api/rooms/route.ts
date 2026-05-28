@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase, serverClient } from "@/lib/supabase";
 import { verifySignedMessage } from "@/lib/verify-signature";
 import { buildMessageToSign, ROOM_SLUG_REGEX } from "@/lib/feed-types";
+import { fetchTokenMeta } from "@/lib/room-gating";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,6 +69,17 @@ export async function POST(req: NextRequest) {
   const ts = Number(body.ts ?? 0);
   const signature = String(body.signature ?? "");
 
+  // v0.50 — optional hold-to-chat gate.
+  const gate_token_address_raw = body.gate_token_address
+    ? String(body.gate_token_address).toLowerCase().trim()
+    : undefined;
+  const gate_chain_raw = body.gate_chain
+    ? String(body.gate_chain).toLowerCase().trim()
+    : undefined;
+  const gate_min_balance_raw_in = body.gate_min_balance_raw
+    ? String(body.gate_min_balance_raw).trim()
+    : undefined;
+
   if (!/^0x[a-f0-9]{40}$/.test(address)) {
     return NextResponse.json({ ok: false, error: "invalid_address" }, { status: 400, headers: CORS });
   }
@@ -87,6 +99,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "missing_signature_or_ts" }, { status: 400, headers: CORS });
   }
 
+  // Gate validation: all three or none.
+  const gatePartial =
+    !!gate_token_address_raw !== !!gate_chain_raw ||
+    !!gate_chain_raw !== !!gate_min_balance_raw_in;
+  if (gatePartial) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "invalid_gate",
+        hint:
+          "gate_token_address, gate_chain, and gate_min_balance_raw must all be set together (or all omitted).",
+      },
+      { status: 400, headers: CORS },
+    );
+  }
+  if (gate_token_address_raw && !/^0x[a-f0-9]{40}$/.test(gate_token_address_raw)) {
+    return NextResponse.json(
+      { ok: false, error: "invalid_gate_token_address" },
+      { status: 400, headers: CORS },
+    );
+  }
+  if (gate_chain_raw && !["base", "ethereum", "mainnet"].includes(gate_chain_raw)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "unsupported_gate_chain",
+        hint: "base | ethereum supported",
+      },
+      { status: 400, headers: CORS },
+    );
+  }
+  if (gate_min_balance_raw_in) {
+    try {
+      const v = BigInt(gate_min_balance_raw_in);
+      if (v <= 0n) throw new Error("non-positive");
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "invalid_gate_min_balance",
+          hint: "uint256 string > 0",
+        },
+        { status: 400, headers: CORS },
+      );
+    }
+  }
+
   const message = buildMessageToSign({
     kind: "signa_room_create",
     address,
@@ -94,6 +153,9 @@ export async function POST(req: NextRequest) {
     slug,
     description,
     is_public,
+    gate_token_address: gate_token_address_raw,
+    gate_chain: gate_chain_raw,
+    gate_min_balance_raw: gate_min_balance_raw_in,
     ts,
   });
 
@@ -117,6 +179,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "slug_taken", hint: "Pick a different slug." }, { status: 409, headers: CORS });
   }
 
+  // Resolve real token symbol + decimals from chain when gated.
+  let gate_token_symbol: string | null = null;
+  let gate_token_decimals: number | null = null;
+  if (gate_token_address_raw && gate_chain_raw) {
+    const meta = await fetchTokenMeta(gate_token_address_raw, gate_chain_raw);
+    gate_token_symbol = meta.symbol;
+    gate_token_decimals = typeof meta.decimals === "number" ? meta.decimals : null;
+  }
+
   const db = serverClient();
   const { data, error: insErr } = await db
     .from("signa_rooms")
@@ -129,8 +200,15 @@ export async function POST(req: NextRequest) {
       ts,
       signature,
       signed_message: message,
+      gate_token_address: gate_token_address_raw ?? null,
+      gate_chain: gate_chain_raw ?? null,
+      gate_min_balance_raw: gate_min_balance_raw_in ?? null,
+      gate_token_symbol,
+      gate_token_decimals,
     })
-    .select("id, name, slug, description, creator_address, is_public, ts, created_at")
+    .select(
+      "id, name, slug, description, creator_address, is_public, ts, created_at, gate_token_address, gate_chain, gate_min_balance_raw, gate_token_symbol, gate_token_decimals",
+    )
     .single();
 
   if (insErr) {

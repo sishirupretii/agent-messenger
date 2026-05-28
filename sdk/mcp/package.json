@@ -1,6 +1,6 @@
 {
   "name": "signa-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "SIGNA Model Context Protocol server. Drop into Claude Desktop, Cursor, Windsurf, or any MCP-compatible client and your AI tool gets a wallet on SIGNA plus working tools for Aeon (ERC-8004), Bankr, Gitlawb, and MiroShark. Cross-platform agent messaging + integrated partner skills, zero code.",
   "type": "module",
   "bin": {
