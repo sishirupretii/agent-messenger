@@ -614,14 +614,16 @@ export function RoomChat({
           )}
           <button
             onClick={() => {
-              const code = `<iframe src="https://www.signaagent.xyz/rooms/${slug}/embed" style="width:100%;height:560px;border:0;border-radius:8px" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"></iframe>`;
+              const iframeCode = `<iframe src="https://www.signaagent.xyz/rooms/${slug}/embed" style="width:100%;height:560px;border:0;border-radius:8px" allow="clipboard-write" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-popups-to-escape-sandbox"></iframe>`;
+              const scriptCode = `<div data-signa-room="${slug}" style="height:560px"></div>\n<script src="https://www.signaagent.xyz/widget.js" defer></script>`;
+              const code = `${iframeCode}\n\n— OR —\n\n${scriptCode}`;
               navigator.clipboard.writeText(code).then(() => {
-                alert("embed code copied — paste into any HTML page");
+                alert("embed snippets copied — iframe + script. paste either into any HTML page.");
               }).catch(() => {
-                window.prompt("copy this embed code:", code);
+                window.prompt("copy embed snippets:", code);
               });
             }}
-            title="Copy iframe embed code"
+            title="Copy iframe + widget.js embed snippets"
             className="ml-auto text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded-sm border border-white/15 hover:border-white/30 text-white/55 hover:text-white font-mono transition"
           >
             ⧉ embed

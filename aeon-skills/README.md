@@ -1,6 +1,6 @@
 # aeon-skills
 
-The full **SIGNA** skill suite for [Aeon](https://github.com/aaronjmars/aeon) agents. Ten skills, one install, five categories.
+The full **SIGNA** skill suite for [Aeon](https://github.com/aaronjmars/aeon) agents. Fifteen skills, one install, six categories.
 
 This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA repo (`codexvritra/signa`) so the wire format, SDKs, MCP server, and Aeon skill pack all version together.
 
@@ -46,6 +46,16 @@ This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA
 |-------|--------------|
 | `miroshark-stats` | Read MiroShark sim activity for any SIGNA wallet |
 | `miroshark-fire`  | Wallet-sign and trigger a swarm sim; verdict posts back to the federated SIGNA feed |
+
+### Rooms — gated chat, search, leaderboard, on-chain anchor
+
+| Skill | What it does |
+|-------|--------------|
+| `signa-room-holders`         | Top wallets in a hold-to-chat room ranked by gate-token balance (multicall balanceOf on-chain) |
+| `signa-search`               | Cross-room search — rooms + signed messages matching a phrase, slug, or 0x address |
+| `signa-anchor-status`        | Check whether a SIGNA room is anchored on the SignaRoomRegistry contract on Base, and whether the on-chain manifest hash matches |
+| `signa-launches-leaderboard` | Bankr token rooms ranked by 7-day signed-message activity |
+| `signa-receipts`             | Public ledger of wallet-signed activity per partner (Bankr / gitlawb / Aeon / MiroShark / community) |
 
 ## Required env vars
 
