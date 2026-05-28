@@ -24,8 +24,11 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           </div>
         </Link>
         <nav className="hidden sm:flex items-center gap-1 text-[13px]">
-          <NavLink href="/me" active={pathname?.startsWith("/me") ?? false}>
+          <NavLink href="/me" active={pathname === "/me" || (pathname?.startsWith("/me") && !pathname?.startsWith("/me/mentions"))}>
             Me
+          </NavLink>
+          <NavLink href="/me/mentions" active={pathname?.startsWith("/me/mentions") ?? false}>
+            Mentions
           </NavLink>
           <NavLink href="/" active={pathname === "/"}>
             Chat

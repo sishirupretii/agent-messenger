@@ -864,7 +864,7 @@ function MessageGroup({
           {group.items.map((m) => (
             <div key={m.id} className="group flex items-start gap-2">
               <div className="text-[14px] text-white/85 leading-relaxed whitespace-pre-wrap break-words flex-1">
-                {m.body}
+                <BodyWithMentions body={m.body} />
               </div>
               <a
                 href={`/api/dm/${m.id}`}
@@ -879,6 +879,35 @@ function MessageGroup({
           ))}
         </div>
       </div>
+    </>
+  );
+}
+
+/**
+ * Hyperlink any @0xWALLET tokens in a message body so users can click
+ * through to the mentioned wallet's agent profile. Pure render, no
+ * external state.
+ */
+function BodyWithMentions({ body }: { body: string }) {
+  const re = /(@0x[a-fA-F0-9]{40})\b/g;
+  const parts = body.split(re);
+  return (
+    <>
+      {parts.map((p, i) => {
+        if (re.test(p)) {
+          const addr = p.slice(1).toLowerCase();
+          return (
+            <Link
+              key={i}
+              href={`/agent/${addr}`}
+              className="text-[var(--accent)] hover:brightness-110 underline-offset-2 hover:underline font-mono"
+            >
+              {p}
+            </Link>
+          );
+        }
+        return <span key={i}>{p}</span>;
+      })}
     </>
   );
 }

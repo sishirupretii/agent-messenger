@@ -3,6 +3,7 @@ import { supabase, serverClient } from "@/lib/supabase";
 import { verifySignedMessage } from "@/lib/verify-signature";
 import { buildMessageToSign, MAX_ROOM_MESSAGE_LENGTH } from "@/lib/feed-types";
 import { checkRoomGate, formatBalance } from "@/lib/room-gating";
+import { parseMentions } from "@/lib/mention-parser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -226,5 +227,28 @@ export async function POST(
     return NextResponse.json({ ok: false, error: insErr.message }, { status: 500, headers: CORS });
   }
 
-  return NextResponse.json({ ok: true, message: data }, { status: 200, headers: CORS });
+  // v0.73 — fan-out @0x mentions. Best-effort: if the mentions insert
+  // fails the message itself stays — recipients just don't get the
+  // inbox row. Capped at 10 per envelope by the parser.
+  const mentioned = parseMentions(messageBody).filter((a) => a !== address);
+  if (mentioned.length > 0) {
+    const rows = mentioned.map((mentioned_address) => ({
+      message_id: data.id,
+      room_id: room.id,
+      from_address: address,
+      mentioned_address,
+      ts,
+    }));
+    const { error: mErr } = await db
+      .from("signa_room_mentions")
+      .upsert(rows, { onConflict: "message_id,mentioned_address" });
+    if (mErr) {
+      console.error("[mentions] insert failed:", mErr.message);
+    }
+  }
+
+  return NextResponse.json(
+    { ok: true, message: data, mentions: mentioned },
+    { status: 200, headers: CORS },
+  );
 }
