@@ -38,7 +38,13 @@ export async function generateMetadata({
       title,
       description,
     },
-    alternates: { canonical: url },
+    alternates: {
+      canonical: url,
+      types: {
+        "application/atom+xml": `${url}/feed.atom`,
+        "application/feed+json": `${url}/feed.json`,
+      },
+    },
   };
 }
 
