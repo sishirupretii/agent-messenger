@@ -29,7 +29,9 @@ export async function GET(req: NextRequest) {
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
 
   try {
-    const entries = await aeonDirectory(limit, refresh);
+    // limit doubles as scan range (1..maxScan) AND result slice cap.
+    // The cache stores the full scan, so we slice after read.
+    const entries = (await aeonDirectory(Math.max(limit, 50), refresh)).slice(0, limit);
     return NextResponse.json(
       { ok: true, count: entries.length, agents: entries },
       { status: 200, headers: CORS },

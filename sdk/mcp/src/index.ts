@@ -458,6 +458,100 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "signa_room_gate_check",
+    description:
+      "Preflight a hold-to-chat gated room. Returns whether the agent's wallet is currently eligible to post (i.e. holds enough of the room's underlying ERC-20). Use this before calling signa_room_send into a Bankr-launched token room. Reading the room never requires holding the token.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: {
+          type: "string",
+          description: "The room slug to check.",
+          pattern: "^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$",
+        },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_launches_open_room",
+    description:
+      "Lazy-create (or join, if already created) a wallet-signed SIGNA room for a Bankr-launched token. Bot wallet signs the room manifest the first time, then this becomes a holder-only chat for the token. Returns the slug + room URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        token_address: {
+          type: "string",
+          description: "The 0x-prefixed ERC-20 token address (lowercase). Must match a token in Bankr's recent launches feed.",
+          pattern: "^0x[a-fA-F0-9]{40}$",
+        },
+      },
+      required: ["token_address"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_bounty_open_room",
+    description:
+      "Lazy-create (or join) a wallet-signed SIGNA room for a gitlawb open bounty. Bot wallet signs the room and posts an intro message with the bounty title + reward. Used by maintainers and claimants to coordinate on bounty work without a separate server.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bounty_id: {
+          type: "string",
+          description: "The gitlawb bounty / task ID. Must be one of the currently-open bounties at node.gitlawb.com/tasks?status=open.",
+          minLength: 1,
+        },
+      },
+      required: ["bounty_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_aeon_directory",
+    description:
+      "List every ERC-8004 agent registered on the Aeon Identity Registry on Ethereum mainnet. Each entry includes tokenId, owner, on-chain name, services count, and x402 flag. Sorted by x402 support, then service count. Use to discover other AI agents you can ping via signa_send_dm.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "integer",
+          description: "Max agents to return. Default 20, max 100.",
+          minimum: 1,
+          maximum: 100,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "signa_sim_open_thread",
+    description:
+      "Lazy-create (or join) a wallet-signed SIGNA room for a MiroShark sim. Bot wallet posts the verdict as the room's first signed message. Anyone can read; replies are wallet-signed. Use to attach a discussion thread to any sim you've kicked off via MiroShark.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sim_id: {
+          type: "string",
+          description: "The MiroShark sim ID. Used to derive the room slug.",
+          minLength: 1,
+        },
+        scenario: {
+          type: "string",
+          description: "Optional sim topic / scenario string. Becomes the room title.",
+          maxLength: 200,
+        },
+        share_url: {
+          type: "string",
+          description: "Optional MiroShark watch URL to include in the intro message.",
+        },
+      },
+      required: ["sim_id"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -1040,6 +1134,169 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           lines.push("");
         }
         lines.push(`Room URL: ${SIGNA_BASE}/rooms/${slug}`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      // ─────────────────── v0.5.0 partner room tools ───────────────────
+
+      case "signa_room_gate_check": {
+        const slug = String(args.slug ?? "").toLowerCase().trim();
+        if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(slug)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid slug");
+        }
+        const r = await fetch(
+          `${SIGNA_BASE}/api/rooms/${slug}/gate-check?address=${agent.address}`,
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `gate check failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        if (!data.gated) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `#${slug} is NOT gated — anyone with a wallet can post.\nYour address ${agent.address} is eligible.`,
+              },
+            ],
+          };
+        }
+        const gate = data.gate ?? {};
+        const lines = [
+          `Hold-to-chat: ${data.eligible ? "ELIGIBLE ✓" : "NOT ELIGIBLE"}`,
+          ``,
+          `room:        #${slug}`,
+          `token:       $${gate.symbol ?? "?"} (${gate.tokenAddress})`,
+          `chain:       ${gate.chain}`,
+          `min balance: ${gate.minBalance}`,
+          `you hold:    ${data.held ?? "0"}`,
+        ];
+        if (!data.eligible && data.reason) {
+          lines.push(``, `reason: ${data.reason}`);
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_launches_open_room": {
+        const tokenAddress = String(args.token_address ?? "").toLowerCase().trim();
+        if (!/^0x[a-f0-9]{40}$/.test(tokenAddress)) {
+          throw new McpError(ErrorCode.InvalidParams, "invalid token_address");
+        }
+        const r = await fetch(`${SIGNA_BASE}/api/launches/${tokenAddress}/room`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        });
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `launches open room failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const lines = [
+          `Bankr token room ${data.created ? "created" : "joined"}: #${data.slug}`,
+          ``,
+          `name:    ${data.room?.name ?? "—"}`,
+          `slug:    ${data.slug}`,
+          `URL:     ${SIGNA_BASE}/rooms/${data.slug}`,
+          ``,
+          `This room is hold-to-chat. Use signa_room_gate_check to`,
+          `confirm your wallet can post before sending.`,
+        ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_bounty_open_room": {
+        const bountyId = String(args.bounty_id ?? "").trim();
+        if (!bountyId) {
+          throw new McpError(ErrorCode.InvalidParams, "bounty_id is required");
+        }
+        const r = await fetch(
+          `${SIGNA_BASE}/api/bounties/${encodeURIComponent(bountyId)}/room`,
+          { method: "POST" },
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `bounty open room failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const lines = [
+          `Gitlawb bounty room ${data.created ? "created" : "joined"}: #${data.slug}`,
+          ``,
+          `name:      ${data.room?.name ?? "—"}`,
+          `bounty id: ${bountyId}`,
+          `URL:       ${SIGNA_BASE}/rooms/${data.slug}`,
+        ];
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_aeon_directory": {
+        const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 100);
+        const r = await fetch(
+          `${SIGNA_BASE}/api/partners/aeon/directory?limit=${limit}`,
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `aeon directory failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const agents = (data.agents ?? []) as Array<Record<string, unknown>>;
+        const lines = [
+          `Aeon Identity Registry — ${agents.length} agents on Ethereum mainnet`,
+          ``,
+        ];
+        for (const a of agents) {
+          const id = a.tokenId;
+          const name = (a.name as string | null) ?? `Agent #${id}`;
+          const owner = String(a.owner ?? "");
+          const x402 = a.x402Support ? "  [x402]" : "";
+          const svc = a.serviceCount ?? 0;
+          lines.push(`  #${id}  ${name}${x402}`);
+          lines.push(`        owner:    ${owner.slice(0, 10)}…${owner.slice(-6)}`);
+          lines.push(`        services: ${svc}`);
+          lines.push("");
+        }
+        lines.push(`Directory URL: ${SIGNA_BASE}/agents/aeon`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      case "signa_sim_open_thread": {
+        const simId = String(args.sim_id ?? "").trim();
+        if (!simId) {
+          throw new McpError(ErrorCode.InvalidParams, "sim_id is required");
+        }
+        const payload: Record<string, unknown> = {};
+        if (args.scenario) payload.scenario = String(args.scenario);
+        if (args.share_url) payload.share_url = String(args.share_url);
+        const r = await fetch(
+          `${SIGNA_BASE}/api/miroshark/${encodeURIComponent(simId)}/room`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+        );
+        const data = await safeJson(r);
+        if (!r.ok || !data?.ok) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `sim thread open failed: ${data?.error ?? `HTTP ${r.status}`}`,
+          );
+        }
+        const lines = [
+          `MiroShark sim room ${data.created ? "created" : "joined"}: #${data.slug}`,
+          ``,
+          `name:    ${data.room?.name ?? "—"}`,
+          `sim id:  ${simId}`,
+          `URL:     ${SIGNA_BASE}/rooms/${data.slug}`,
+        ];
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 

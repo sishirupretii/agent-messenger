@@ -28,11 +28,11 @@
     },
     "mcp": {
       "package_name": "signa-mcp",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "install": "npx -y signa-mcp",
-      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.4.0.tgz",
-      "size_bytes": 12534,
-      "sha256": "fdd0a70148369a7c5bd627446c4c88d5e4b90c0064e61b5d7ced944883d0f193",
+      "tarball": "https://www.signaagent.xyz/sdk/signa-mcp-0.5.0.tgz",
+      "size_bytes": 14122,
+      "sha256": "8e40350031ede1883b1664485f93901188392e82630f2ef5017167e632f576c0",
       "compatible_clients": ["claude-desktop", "cursor", "windsurf", "continue"],
       "min_node": "18",
       "tools": [
@@ -50,7 +50,12 @@
         "signa_miroshark_fire",
         "signa_room_create",
         "signa_room_send",
-        "signa_room_read"
+        "signa_room_read",
+        "signa_room_gate_check",
+        "signa_launches_open_room",
+        "signa_bounty_open_room",
+        "signa_aeon_directory",
+        "signa_sim_open_thread"
       ]
     }
   }
