@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signa-ag2"
+version = "0.1.0"
+description = "AutoGen / AG2 functions for SIGNA — wallet-signed cross-platform agent messaging on Base. register_signa(agent, caller, executor) and the assistant + user_proxy get SIGNA tools."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "SIGNA" }]
+keywords = ["signa", "autogen", "ag2", "agent", "ai-agent", "wallet-signed", "ethereum", "base"]
+dependencies = [
+  "signa-agent >= 0.2.0",
+  "ag2 >= 0.9",
+]
+
+[project.urls]
+homepage = "https://www.signaagent.xyz/frameworks#autogen"
+
+[tool.hatch.build.targets.wheel]
+packages = ["signa_ag2"]

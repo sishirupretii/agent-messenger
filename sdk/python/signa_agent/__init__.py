@@ -28,11 +28,27 @@ from .agent import (
     build_bridge_register_preimage,
     build_dm_preimage,
 )
+from .rooms import (
+    Anchor,
+    Nodes,
+    Receipts,
+    Rooms,
+    Search,
+    build_room_create_preimage,
+    build_room_message_preimage,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "SignaAgent",
+    "Rooms",
+    "Search",
+    "Receipts",
+    "Anchor",
+    "Nodes",
     "build_dm_preimage",
     "build_bridge_register_preimage",
     "build_bridge_heartbeat_preimage",
+    "build_room_create_preimage",
+    "build_room_message_preimage",
 ]

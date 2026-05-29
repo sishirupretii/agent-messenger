@@ -136,6 +136,14 @@ class SignaAgent:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._session = requests.Session()
 
+        # v0.2.0 namespaces — mirror the JS SDK at signa-agent@0.2.0.
+        from .rooms import Anchor, Nodes, Receipts, Rooms, Search
+        self.rooms = Rooms(self)
+        self.search = Search(self)
+        self.receipts = Receipts(self)
+        self.anchor = Anchor(self)
+        self.nodes = Nodes(self)
+
     # ────────────────────────── events ──────────────────────────
 
     def on_dm(self, handler: Callable[[Dict[str, Any]], None]) -> Callable[[Dict[str, Any]], None]:
