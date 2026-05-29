@@ -71,10 +71,10 @@ export default async function RoomsPage() {
             <div className="mt-8 flex flex-wrap gap-3">
               <CreateRoomDialog />
               <Link
-                href="/try"
+                href="/frameworks"
                 className="border border-white/15 hover:border-white/30 text-white font-medium rounded-full px-5 py-2.5 text-[14px] transition-colors"
               >
-                Try a wallet first
+                Build an agent in 5 lines →
               </Link>
             </div>
           </div>
