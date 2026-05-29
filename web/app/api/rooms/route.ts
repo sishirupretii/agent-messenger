@@ -80,6 +80,16 @@ export async function POST(req: NextRequest) {
     ? String(body.gate_min_balance_raw).trim()
     : undefined;
 
+  // v0.80 — optional encryption + membership list. When members[] is
+  // provided, the room is automatically marked encrypted + private.
+  // Server stores membership but never sees plaintext or keys.
+  const membersIn: string[] = Array.isArray(body.members)
+    ? body.members
+        .map((m: any) => String(m ?? "").toLowerCase().trim())
+        .filter((m: string) => /^0x[a-f0-9]{40}$/.test(m))
+    : [];
+  const is_encrypted = !!body.is_encrypted || membersIn.length > 0;
+
   if (!/^0x[a-f0-9]{40}$/.test(address)) {
     return NextResponse.json({ ok: false, error: "invalid_address" }, { status: 400, headers: CORS });
   }
@@ -146,6 +156,49 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // v0.80 — encryption + member sanity.
+  if (is_encrypted && membersIn.length === 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "encrypted_room_needs_members",
+        hint: "Encrypted rooms must include the creator address in members[] plus any invitees.",
+      },
+      { status: 400, headers: CORS },
+    );
+  }
+  if (membersIn.length > 0 && !membersIn.includes(address)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "creator_not_in_members",
+        hint: "Creator must be listed in members[] so they can decrypt their own messages.",
+      },
+      { status: 400, headers: CORS },
+    );
+  }
+  if (membersIn.length > 50) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "too_many_members",
+        hint: "Max 50 members per encrypted room in v0.80.",
+      },
+      { status: 400, headers: CORS },
+    );
+  }
+  // Encrypted rooms must NOT be public — they're explicitly private.
+  if (is_encrypted && is_public) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "encrypted_must_be_private",
+        hint: "Encrypted rooms can't be public. Pass is_public=false.",
+      },
+      { status: 400, headers: CORS },
+    );
+  }
+
   const message = buildMessageToSign({
     kind: "signa_room_create",
     address,
@@ -205,14 +258,43 @@ export async function POST(req: NextRequest) {
       gate_min_balance_raw: gate_min_balance_raw_in ?? null,
       gate_token_symbol,
       gate_token_decimals,
+      is_encrypted,
+      encryption_version: is_encrypted ? "signa-sealedbox-v1" : null,
     })
     .select(
-      "id, name, slug, description, creator_address, is_public, ts, created_at, gate_token_address, gate_chain, gate_min_balance_raw, gate_token_symbol, gate_token_decimals",
+      "id, name, slug, description, creator_address, is_public, ts, created_at, gate_token_address, gate_chain, gate_min_balance_raw, gate_token_symbol, gate_token_decimals, is_encrypted, encryption_version",
     )
     .single();
 
   if (insErr) {
     return NextResponse.json({ ok: false, error: insErr.message }, { status: 500, headers: CORS });
+  }
+
+  // v0.80 — seed membership for encrypted rooms. The room_create signed
+  // envelope already commits to the creator; we attribute every initial
+  // member row to that same envelope so anyone can re-verify the seed
+  // set against the room's signed_message.
+  if (is_encrypted && membersIn.length > 0) {
+    const dedup = Array.from(new Set(membersIn));
+    const memberRows = dedup.map((member_address) => ({
+      room_id: data.id,
+      member_address,
+      added_by: address,
+      added_ts: ts,
+      added_signature: signature,
+      added_signed_message: message,
+    }));
+    const { error: memErr } = await db
+      .from("signa_room_members")
+      .insert(memberRows);
+    if (memErr) {
+      // Roll back so we don't leave a memberless encrypted room.
+      await db.from("signa_rooms").delete().eq("id", data.id);
+      return NextResponse.json(
+        { ok: false, error: "member_seed_failed", detail: memErr.message },
+        { status: 500, headers: CORS },
+      );
+    }
   }
 
   return NextResponse.json({ ok: true, room: data }, { status: 200, headers: CORS });

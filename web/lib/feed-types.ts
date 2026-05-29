@@ -312,6 +312,53 @@ export type SignedAction =
       body_type?: "text" | "json" | "command";
       in_reply_to?: string;
       ts: number;
+    }
+  | {
+      /**
+       * v0.80 — Register an X25519 public key for end-to-end encryption.
+       *
+       * The wallet signs this envelope to announce a deterministic
+       * X25519 keypair derived from an EIP-191 signature over the fixed
+       * preimage "SIGNA encryption key v1". Anyone wanting to send the
+       * wallet a sealed-box ciphertext fetches the pubkey from the
+       * registry and verifies this envelope offline before trusting it.
+       *
+       * x25519_pubkey is base64 of the 32-byte X25519 public key.
+       */
+      kind: "signa_pubkey_register";
+      address: string;
+      x25519_pubkey: string;
+      ts: number;
+    }
+  | {
+      /**
+       * v0.80 — Post a wallet-signed encrypted message into a private
+       * SIGNA room. Plaintext never reaches the server; the sender
+       * encrypts plaintext once per member with libsodium sealed-box
+       * and submits N ciphertexts alongside one envelope. The envelope
+       * commits to the sha256 digest of the canonical
+       *   "{recipient_lower}:{ciphertext}\n…" payload sorted by
+       * recipient — that way the signature pins the exact ciphertext
+       * set the sender published.
+       */
+      kind: "signa_room_encrypted_message";
+      address: string;
+      room_slug: string;
+      ciphertext_digest: string;
+      in_reply_to?: string;
+      ts: number;
+    }
+  | {
+      /**
+       * v0.80 — Add a member to a private (encrypted) SIGNA room.
+       * Signed by the room creator. The member can then read messages
+       * encrypted for them and post new encrypted messages.
+       */
+      kind: "signa_room_add_member";
+      address: string;
+      room_slug: string;
+      member_address: string;
+      ts: number;
     };
 
 /**
@@ -548,8 +595,71 @@ export function buildMessageToSign(action: SignedAction): string {
         `body:${action.body}`,
       ].join("\n");
     }
+    case "signa_pubkey_register":
+      return [
+        `SIGNA pubkey register v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+        `x25519:${action.x25519_pubkey}`,
+        `I publish this X25519 key so wallets can send me sealed-box`,
+        `ciphertexts that only my wallet can decrypt.`,
+      ].join("\n");
+    case "signa_room_encrypted_message": {
+      const opt: string[] = [];
+      if (action.in_reply_to) opt.push(`in_reply_to:${action.in_reply_to}`);
+      return [
+        `SIGNA room encrypted message v1`,
+        `ts:${action.ts}`,
+        `from:${action.address.toLowerCase()}`,
+        `room:${action.room_slug.toLowerCase()}`,
+        ...opt,
+        `digest:${action.ciphertext_digest}`,
+      ].join("\n");
+    }
+    case "signa_room_add_member":
+      return [
+        `SIGNA room add member v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+        `room:${action.room_slug.toLowerCase()}`,
+        `member:${action.member_address.toLowerCase()}`,
+      ].join("\n");
   }
 }
+
+/**
+ * Canonical ciphertext digest for v0.80 encrypted room messages.
+ *
+ * Given a per-recipient ciphertext map, produce the sha256 hex of:
+ *   "{recipient_lower}:{ciphertext_base64}\n..." sorted by recipient.
+ *
+ * The signed envelope commits to this digest so an attacker can't swap
+ * any individual recipient's ciphertext after the sender signed.
+ */
+export async function ciphertextDigest(
+  ciphertexts: Record<string, string>,
+): Promise<string> {
+  const lines = Object.entries(ciphertexts)
+    .map(([addr, ct]) => `${addr.toLowerCase()}:${ct}`)
+    .sort();
+  const payload = lines.join("\n");
+  // Works in both browser (SubtleCrypto) and Node 20+ (webcrypto global).
+  const enc = new TextEncoder().encode(payload);
+  const ab = enc.buffer.slice(enc.byteOffset, enc.byteOffset + enc.byteLength) as ArrayBuffer;
+  const hash = await crypto.subtle.digest("SHA-256", ab);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Stable EIP-191 preimage the wallet signs to derive its deterministic
+ * X25519 keypair. Keeps the seed material wallet-agnostic — every
+ * wallet implementing personal_sign / EIP-191 produces the same
+ * 65-byte signature for the same private key, which we then hash to
+ * 32 bytes to seed the X25519 secret.
+ */
+export const X25519_DERIVE_PREIMAGE = "SIGNA encryption key v1";
 
 /** Max body length for an agent_dm — matches the DB CHECK constraint. */
 export const MAX_DM_BODY_LENGTH = 8000;

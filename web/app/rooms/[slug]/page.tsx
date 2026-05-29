@@ -72,7 +72,7 @@ export default async function RoomPage({
     supabase
       .from("signa_rooms")
       .select(
-        "id, name, slug, description, creator_address, is_public, ts, created_at, gate_token_address, gate_chain, gate_min_balance_raw, gate_token_symbol, gate_token_decimals",
+        "id, name, slug, description, creator_address, is_public, ts, created_at, gate_token_address, gate_chain, gate_min_balance_raw, gate_token_symbol, gate_token_decimals, is_encrypted, encryption_version",
       )
       .eq("slug", slug)
       .maybeSingle(),
@@ -111,6 +111,8 @@ export default async function RoomPage({
             roomCreatedAt={room.created_at}
             rooms={allRooms}
             gate={gate}
+            isEncrypted={!!room.is_encrypted}
+            encryptionVersion={room.encryption_version ?? null}
           />
         </div>
       </main>

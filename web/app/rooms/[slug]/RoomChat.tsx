@@ -1,10 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useAccount, useWalletClient } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { getRoomBadges, type RoomBadge } from "@/lib/room-badges";
+import {
+  buildMessageToSign,
+  ciphertextDigest,
+  X25519_DERIVE_PREIMAGE,
+} from "@/lib/feed-types";
+import {
+  decryptSealedBox,
+  deriveSignaKeyPair,
+  encryptForMembers,
+  type SignaKeyPair,
+} from "@/lib/encryption";
 
 interface RoomMessage {
   id: string;
@@ -15,6 +26,16 @@ interface RoomMessage {
   signature?: string;
   in_reply_to: string | null;
   created_at?: string;
+  is_encrypted?: boolean;
+  ciphertext_digest?: string | null;
+  ciphertexts?: Record<string, string>;
+}
+
+interface RoomMemberRow {
+  address: string;
+  x25519_pubkey: string | null;
+  added_by: string;
+  added_ts: number;
 }
 
 interface RoomLink {
@@ -50,6 +71,8 @@ interface RoomChatProps {
   roomCreatedAt: string;
   rooms: RoomLink[];
   gate?: RoomGate | null;
+  isEncrypted?: boolean;
+  encryptionVersion?: string | null;
 }
 
 const POLL_MS = 4_000;
@@ -275,6 +298,8 @@ export function RoomChat({
   roomCreatedAt,
   rooms,
   gate,
+  isEncrypted = false,
+  encryptionVersion = null,
 }: RoomChatProps) {
   const { address } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -283,6 +308,17 @@ export function RoomChat({
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // v0.80 — encrypted-room state. The X25519 keypair is derived once
+  // per session via a deterministic EIP-191 signature; we keep the
+  // secret bytes in memory only and never persist them.
+  const [keyPair, setKeyPair] = useState<SignaKeyPair | null>(null);
+  const [keyPairError, setKeyPairError] = useState<string | null>(null);
+  const [deriving, setDeriving] = useState(false);
+  const [roomMembers, setRoomMembers] = useState<RoomMemberRow[]>([]);
+  const [isMember, setIsMember] = useState<boolean | null>(null);
+  // Plaintext cache keyed by message id so we don't re-decrypt every poll.
+  const decryptedCache = useRef<Map<string, string>>(new Map());
   const [gateStatus, setGateStatus] = useState<{
     checked: boolean;
     eligible: boolean;
@@ -306,6 +342,94 @@ export function RoomChat({
     () => (slashOpen ? SLASH.filter((c) => c.name.startsWith(slashFilter)) : []),
     [slashOpen, slashFilter],
   );
+
+  // v0.80 — load encrypted-room members so we know who to encrypt to
+  // and to compute is-member status for the connected wallet.
+  useEffect(() => {
+    if (!isEncrypted) {
+      setRoomMembers([]);
+      setIsMember(null);
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch(`/api/rooms/${slug}/members`, { cache: "no-store" });
+        const d = await r.json().catch(() => ({}));
+        if (cancelled || !d?.ok) return;
+        const list = (d.members ?? []) as RoomMemberRow[];
+        setRoomMembers(list);
+        if (address) {
+          setIsMember(list.some((m) => m.address === address.toLowerCase()));
+        }
+      } catch {}
+    }
+    load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [slug, isEncrypted, address]);
+
+  // v0.80 — derive deterministic X25519 keypair from a wallet signature.
+  // Called lazily the first time the user needs to decrypt or send into
+  // an encrypted room. Also POSTs the pubkey to the registry so other
+  // members can fetch + encrypt to us.
+  const ensureKeyPair = useCallback(async (): Promise<SignaKeyPair | null> => {
+    if (keyPair) return keyPair;
+    if (!address || !walletClient) return null;
+    setDeriving(true);
+    setKeyPairError(null);
+    try {
+      const kp = await deriveSignaKeyPair(async (message) =>
+        await walletClient.signMessage({ message }),
+      );
+      // Publish pubkey — separate signed envelope so anyone can verify
+      // the (address, pubkey) binding offline. Skip silently if a row
+      // already exists for this address with the same pubkey.
+      try {
+        const existing = await fetch(
+          `/api/users/${address.toLowerCase()}/pubkey`,
+          { cache: "no-store" },
+        );
+        const existingJson = await existing.json().catch(() => ({}));
+        if (
+          !existingJson?.ok ||
+          existingJson?.pubkey?.x25519_pubkey !== kp.publicKeyBase64
+        ) {
+          const ts = Date.now();
+          const preimage = buildMessageToSign({
+            kind: "signa_pubkey_register",
+            address: address.toLowerCase(),
+            x25519_pubkey: kp.publicKeyBase64,
+            ts,
+          });
+          const signature = await walletClient.signMessage({ message: preimage });
+          await fetch(`/api/users/${address.toLowerCase()}/pubkey`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              address: address.toLowerCase(),
+              x25519_pubkey: kp.publicKeyBase64,
+              ts,
+              signature,
+            }),
+          });
+        }
+      } catch {
+        // Registration is best-effort. Decrypting still works if we
+        // already have a previously-registered pubkey on file.
+      }
+      setKeyPair(kp);
+      return kp;
+    } catch (e) {
+      setKeyPairError(e instanceof Error ? e.message : String(e));
+      return null;
+    } finally {
+      setDeriving(false);
+    }
+  }, [keyPair, address, walletClient]);
 
   // Polling
   useEffect(() => {
@@ -453,36 +577,104 @@ export function RoomChat({
     setSending(true);
     try {
       let bodyToSend = trimmed;
-      // Run slash command and use its output as the message body
-      const slashResult = await executeSlash(trimmed);
-      if (slashResult !== null) {
-        bodyToSend = slashResult;
+      // Run slash command and use its output as the message body.
+      // Slash commands stay plaintext-only — they don't fire in
+      // encrypted rooms because their resolved output would leak.
+      if (!isEncrypted) {
+        const slashResult = await executeSlash(trimmed);
+        if (slashResult !== null) {
+          bodyToSend = slashResult;
+        }
       }
       if (bodyToSend.length > 8000) bodyToSend = bodyToSend.slice(0, 8000);
 
       const ts = Date.now();
-      const message = buildRoomMessagePreimage({
-        ts,
-        address,
-        room_slug: slug,
-        body: bodyToSend,
-      });
-      const signature = await walletClient.signMessage({ message });
-      const r = await fetch(`/api/rooms/${slug}/messages`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+
+      if (isEncrypted) {
+        // 1. Need our keypair to be deterministically derived.
+        const kp = await ensureKeyPair();
+        if (!kp) {
+          throw new Error(
+            "Couldn't derive your encryption key. Sign the unlock prompt.",
+          );
+        }
+        // 2. Need every member's pubkey or we can't seal-box for them.
+        const missing = roomMembers
+          .filter((m) => !m.x25519_pubkey)
+          .map((m) => m.address);
+        if (missing.length > 0) {
+          throw new Error(
+            `${missing.length} member(s) haven't registered an encryption key yet: ${missing
+              .slice(0, 2)
+              .map((a) => a.slice(0, 6) + "…")
+              .join(", ")}${missing.length > 2 ? "…" : ""}. Ask them to open the room once so their key publishes.`,
+          );
+        }
+        // 3. Seal-box the plaintext once per member.
+        const cipherMap = encryptForMembers(
+          bodyToSend,
+          roomMembers.map((m) => ({
+            address: m.address,
+            x25519_pubkey: m.x25519_pubkey!,
+          })),
+        );
+        // 4. Compute digest the envelope will sign over.
+        const digest = await ciphertextDigest(cipherMap);
+        // 5. Sign + post.
+        const preimage = buildMessageToSign({
+          kind: "signa_room_encrypted_message",
           address: address.toLowerCase(),
-          body: bodyToSend,
+          room_slug: slug,
+          ciphertext_digest: digest,
           ts,
-          signature,
-        }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok || !data?.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
-      setBody("");
-      setMessages((prev) => [...prev, { ...data.message }]);
-      lastTsRef.current = data.message.ts;
+        });
+        const signature = await walletClient.signMessage({ message: preimage });
+        const r = await fetch(`/api/rooms/${slug}/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            address: address.toLowerCase(),
+            ts,
+            signature,
+            ciphertexts: cipherMap,
+            ciphertext_digest: digest,
+          }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data?.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
+        // Cache our own plaintext for the new row so we don't decrypt
+        // it on the next poll.
+        decryptedCache.current.set(data.message.id, bodyToSend);
+        setBody("");
+        setMessages((prev) => [
+          ...prev,
+          { ...data.message, ciphertexts: cipherMap, is_encrypted: true },
+        ]);
+        lastTsRef.current = data.message.ts;
+      } else {
+        const preimage = buildRoomMessagePreimage({
+          ts,
+          address,
+          room_slug: slug,
+          body: bodyToSend,
+        });
+        const signature = await walletClient.signMessage({ message: preimage });
+        const r = await fetch(`/api/rooms/${slug}/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            address: address.toLowerCase(),
+            body: bodyToSend,
+            ts,
+            signature,
+          }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data?.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
+        setBody("");
+        setMessages((prev) => [...prev, { ...data.message }]);
+        lastTsRef.current = data.message.ts;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -506,10 +698,37 @@ export function RoomChat({
       .sort((a, b) => b.lastTs - a.lastTs);
   }, [messages]);
 
+  // v0.80 — Resolve display body for each message. Plaintext rooms get
+  // the body straight through. Encrypted rooms either:
+  //   * decrypt this user's ciphertext when keyPair is available, or
+  //   * show "[locked — click to unlock]" until they sign once.
+  const decryptedMessages = useMemo(() => {
+    if (!isEncrypted) return messages;
+    return messages.map((m) => {
+      if (!m.is_encrypted) return m;
+      const cacheKey = m.id;
+      const cached = decryptedCache.current.get(cacheKey);
+      if (cached !== undefined) return { ...m, body: cached };
+      if (!address || !keyPair) {
+        return { ...m, body: "[locked — sign once to unlock]" };
+      }
+      const myCipher = m.ciphertexts?.[address.toLowerCase()];
+      if (!myCipher) {
+        return { ...m, body: "[no ciphertext for this wallet]" };
+      }
+      const pt = decryptSealedBox(myCipher, keyPair.secretKey);
+      if (pt === null) {
+        return { ...m, body: "[decrypt failed — key mismatch?]" };
+      }
+      decryptedCache.current.set(cacheKey, pt);
+      return { ...m, body: pt };
+    });
+  }, [messages, isEncrypted, address, keyPair]);
+
   // Group consecutive messages by sender + within 5 min
   const groups = useMemo(() => {
     const out: { from: string; ts: number; items: RoomMessage[] }[] = [];
-    for (const m of messages) {
+    for (const m of decryptedMessages) {
       const last = out[out.length - 1];
       const closeInTime = last && m.ts - last.ts < 5 * 60 * 1000;
       if (last && last.from.toLowerCase() === m.from_address.toLowerCase() && closeInTime) {
@@ -519,7 +738,7 @@ export function RoomChat({
       }
     }
     return out;
-  }, [messages]);
+  }, [decryptedMessages]);
 
   return (
     <div className="h-full grid grid-cols-[240px_1fr_260px] gap-px bg-white/[0.04]">
@@ -589,6 +808,14 @@ export function RoomChat({
               className="text-[10px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border border-[var(--accent)]/40 text-[var(--accent)] font-mono"
             >
               hold ${gate.symbol} to chat
+            </span>
+          )}
+          {isEncrypted && (
+            <span
+              title={`End-to-end encrypted room. libsodium sealed-box per member (${encryptionVersion ?? "signa-sealedbox-v1"}). Server stores opaque ciphertext only.`}
+              className="text-[10px] uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-sm border border-fuchsia-300/40 text-fuchsia-300 font-mono"
+            >
+              encrypted · sealed-box
             </span>
           )}
           {anchor.anchored && anchor.match && (
@@ -671,6 +898,29 @@ export function RoomChat({
               </div>
               <ConnectButton showBalance={false} chainStatus="none" />
             </div>
+          ) : isEncrypted && isMember === false ? (
+            <div className="border border-fuchsia-300/30 bg-fuchsia-300/[0.05] rounded-sm px-3 py-2.5 text-[12.5px] text-white/80 leading-relaxed">
+              <span className="text-fuchsia-300 font-semibold">private room:</span>{" "}
+              you are not in the member list. ask the room creator{" "}
+              <span className="font-mono">{fmtAddr(roomCreator)}</span> to add{" "}
+              <span className="font-mono">{fmtAddr(address)}</span>.
+            </div>
+          ) : isEncrypted && !keyPair ? (
+            <div className="flex items-center justify-between gap-3 border border-fuchsia-300/30 bg-fuchsia-300/[0.05] rounded-sm px-3 py-2.5">
+              <div className="text-[12.5px] text-white/80 leading-relaxed">
+                <span className="text-fuchsia-300 font-semibold">encrypted room:</span>{" "}
+                sign once with your wallet to derive your decryption key and
+                unlock messages. the key never leaves your browser.
+              </div>
+              <button
+                onClick={() => ensureKeyPair()}
+                disabled={deriving}
+                title={`Will ask your wallet to sign "${X25519_DERIVE_PREIMAGE}"`}
+                className="bg-fuchsia-300 text-black font-semibold rounded-sm px-3 py-1.5 text-[12px] hover:brightness-110 transition disabled:opacity-50 uppercase tracking-wide whitespace-nowrap"
+              >
+                {deriving ? "deriving…" : "unlock"}
+              </button>
+            </div>
           ) : gate && gateStatus.checked && !gateStatus.eligible ? (
             <div className="flex items-center justify-between gap-3 border border-[var(--accent)]/30 bg-[var(--accent)]/[0.04] rounded-sm px-3 py-2.5">
               <div className="text-[12.5px] text-white/80 leading-relaxed">
@@ -704,7 +954,11 @@ export function RoomChat({
                       sendMessage();
                     }
                   }}
-                  placeholder={`message #${slug}  ·  type /  for slash commands`}
+                  placeholder={
+                    isEncrypted
+                      ? `encrypted message to ${roomMembers.length} member${roomMembers.length === 1 ? "" : "s"} · ${encryptionVersion ?? "sealed-box"}`
+                      : `message #${slug}  ·  type /  for slash commands`
+                  }
                   className="flex-1 text-[14px] bg-black/40 border border-white/10 rounded-sm px-3 py-2 text-white focus:outline-none focus:border-white/30"
                   disabled={sending}
                 />
@@ -721,8 +975,15 @@ export function RoomChat({
                 {gate && gateStatus.eligible && gateStatus.held
                   ? ` · holding ${gateStatus.held} $${gate.symbol}`
                   : ""}
-                {" "}· / for slash commands
+                {isEncrypted
+                  ? ` · ${encryptionVersion ?? "sealed-box"} per member`
+                  : " · / for slash commands"}
               </div>
+              {keyPairError && (
+                <div className="mt-1.5 text-[10.5px] text-red-400">
+                  encryption-key derive failed: {keyPairError}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -765,7 +1026,39 @@ export function RoomChat({
         </div>
 
         <div className="p-4 border-t border-white/[0.06]">
-          {gate && holders.length > 0 ? (
+          {isEncrypted ? (
+            <>
+              <div className="text-[10px] uppercase tracking-[0.18em] text-fuchsia-300 mb-3">
+                encrypted · {roomMembers.length} member{roomMembers.length === 1 ? "" : "s"}
+              </div>
+              <div className="space-y-1.5">
+                {roomMembers.map((m) => {
+                  const hasKey = !!m.x25519_pubkey;
+                  return (
+                    <div key={m.address} className="flex items-center gap-2.5 text-[12.5px]">
+                      <Avatar address={m.address} size={20} />
+                      <span className="font-mono text-white/75 truncate flex-1">
+                        {fmtAddr(m.address)}
+                      </span>
+                      <span
+                        title={
+                          hasKey
+                            ? "Pubkey registered — can be encrypted to."
+                            : "No pubkey yet. They must open this room once."
+                        }
+                        className={`text-[9.5px] font-mono ${hasKey ? "text-fuchsia-300" : "text-white/30"}`}
+                      >
+                        {hasKey ? "key ✓" : "no key"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] text-white/30 mt-3 leading-snug">
+                {encryptionVersion ?? "signa-sealedbox-v1"} per member · server stores ciphertext only · re-verifiable offline
+              </div>
+            </>
+          ) : gate && holders.length > 0 ? (
             <>
               <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent)] mb-3">
                 top holders · ${gate.symbol}

@@ -69,6 +69,16 @@ function buildRoomCreatePreimage(args: {
   ].join("\n");
 }
 
+function parseMembersList(input: string, creator: string | undefined): string[] {
+  const raw = input
+    .split(/[\s,;\n]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => /^0x[a-f0-9]{40}$/.test(s));
+  const set = new Set(raw);
+  if (creator) set.add(creator.toLowerCase());
+  return [...set];
+}
+
 export function CreateRoomDialog() {
   const router = useRouter();
   const { address } = useAccount();
@@ -82,6 +92,11 @@ export function CreateRoomDialog() {
   const [gateToken, setGateToken] = useState("");
   const [gateChain, setGateChain] = useState<"base" | "ethereum">("base");
   const [gateMin, setGateMin] = useState("1"); // human units, converted to raw using 18 dec default
+
+  // v0.80 — encrypted room toggle + member list.
+  const [encryptedEnabled, setEncryptedEnabled] = useState(false);
+  const [memberInput, setMemberInput] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +156,24 @@ export function CreateRoomDialog() {
       return;
     }
 
+    // v0.80 — encrypted rooms are private + carry an explicit member
+    // list (including the creator). Encrypted + gated is allowed; the
+    // gate becomes purely advisory since membership already gates writes.
+    let members: string[] = [];
+    if (encryptedEnabled) {
+      members = parseMembersList(memberInput, address);
+      if (members.length < 2) {
+        setError(
+          "Encrypted rooms need at least 1 invitee (you are added automatically).",
+        );
+        return;
+      }
+      if (members.length > 50) {
+        setError("Encrypted rooms support up to 50 members in v0.80.");
+        return;
+      }
+    }
+
     // Optional hold-to-chat gate. We send the human-readable min balance
     // through to the server which fetches real decimals on-chain — to
     // keep the signed preimage canonical we convert to raw uint256 here
@@ -170,13 +203,17 @@ export function CreateRoomDialog() {
     setSubmitting(true);
     try {
       const ts = Date.now();
+      // Encrypted rooms are forced private (is_public=false) so the
+      // signed preimage commits to that and the server rejects mixed
+      // requests. Plaintext rooms stay public by default.
+      const isPublic = !encryptedEnabled;
       const message = buildRoomCreatePreimage({
         ts,
         address,
         name: cleanName,
         slug: cleanSlug,
         description: cleanDesc || undefined,
-        is_public: true,
+        is_public: isPublic,
         gate,
       });
       const signature = await walletClient.signMessage({ message });
@@ -188,7 +225,7 @@ export function CreateRoomDialog() {
           name: cleanName,
           slug: cleanSlug,
           description: cleanDesc || undefined,
-          is_public: true,
+          is_public: isPublic,
           ts,
           signature,
           ...(gate
@@ -197,6 +234,9 @@ export function CreateRoomDialog() {
                 gate_chain: gate.chain,
                 gate_min_balance_raw: gate.minRaw,
               }
+            : {}),
+          ...(encryptedEnabled
+            ? { is_encrypted: true, members }
             : {}),
         }),
       });
@@ -418,8 +458,54 @@ export function CreateRoomDialog() {
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
+                checked={encryptedEnabled}
+                onChange={(e) => setEncryptedEnabled(e.target.checked)}
+                className="accent-fuchsia-300"
+              />
+              <span className="text-[12.5px] text-white/80">
+                end-to-end encrypted — private room with sealed-box per member
+              </span>
+            </label>
+            {encryptedEnabled && (
+              <div className="mt-3 space-y-3 pl-6 border-l border-fuchsia-300/30">
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-white/40 mb-1.5">
+                    member wallets · one per line or comma-separated
+                  </div>
+                  <textarea
+                    value={memberInput}
+                    onChange={(e) => setMemberInput(e.target.value)}
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={"0xabc…1234\n0xdef…5678"}
+                    className="w-full font-mono text-[12.5px] bg-black/40 border border-white/10 rounded-sm px-3 py-2 text-white focus:outline-none focus:border-white/30"
+                  />
+                  <div className="text-[11px] text-white/40 mt-1 leading-relaxed">
+                    you are added automatically. each member must open this
+                    room once so their X25519 pubkey publishes — only then
+                    can the next message encrypt to them. max 50 members in
+                    v0.80.
+                  </div>
+                </div>
+                <div className="text-[11px] text-white/55 leading-relaxed">
+                  encrypted rooms are <span className="text-fuchsia-300">always private</span>{" "}
+                  and ignore the hold-to-chat gate — membership IS the gate.
+                  ciphertext is{" "}
+                  <code className="text-white/85">signa-sealedbox-v1</code>{" "}
+                  (libsodium-style box per member). the server never sees
+                  your plaintext or your secret key.
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-white/[0.06] pt-4">
+            <label className={`flex items-center gap-2 cursor-pointer ${encryptedEnabled ? "opacity-40 pointer-events-none" : ""}`}>
+              <input
+                type="checkbox"
                 checked={gateEnabled}
                 onChange={(e) => setGateEnabled(e.target.checked)}
+                disabled={encryptedEnabled}
                 className="accent-[var(--accent)]"
               />
               <span className="text-[12.5px] text-white/80">
