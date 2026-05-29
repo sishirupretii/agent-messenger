@@ -41,6 +41,12 @@ export interface SendOptions {
   protocol?: string;
   /** UUID of the DM being replied to. */
   in_reply_to?: string;
+  /**
+   * v0.84 — when the recipient's inbox is priced, auto-sign the x402
+   * payment (EIP-3009 USDC authorization, gasless) and retry. Default
+   * true. Set false to surface a PaymentRequiredError instead.
+   */
+  autoPay?: boolean;
 }
 
 /** Returned by {@link SignaAgent.registerBridge}. */

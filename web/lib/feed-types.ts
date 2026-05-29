@@ -359,6 +359,29 @@ export type SignedAction =
       room_slug: string;
       member_address: string;
       ts: number;
+    }
+  | {
+      /**
+       * v0.84 — Set (or clear) a price on this wallet's SIGNA inbox.
+       *
+       * When set, anyone DMing this address must attach an x402 payment
+       * (an EIP-3009 transferWithAuthorization signature over the asset,
+       * USDC on Base by default) authorizing `price_raw` base units from
+       * the sender to `pay_to`. SIGNA verifies the authorization and
+       * records it as the DM's payment receipt; settlement is a
+       * permissionless broadcast performed out of band.
+       *
+       * Setting price_raw to "0" clears the price — the inbox is free
+       * again. The signed preimage omits the asset/pay_to lines when
+       * clearing so the envelope stays minimal.
+       */
+      kind: "signa_dm_price_set";
+      address: string;
+      price_raw: string;
+      asset_address?: string;
+      pay_to?: string;
+      chain?: string;
+      ts: number;
     };
 
 /**
@@ -624,6 +647,27 @@ export function buildMessageToSign(action: SignedAction): string {
         `room:${action.room_slug.toLowerCase()}`,
         `member:${action.member_address.toLowerCase()}`,
       ].join("\n");
+    case "signa_dm_price_set": {
+      // Clearing (price 0) keeps a minimal preimage. Setting a price
+      // appends asset/pay_to/chain so the signature commits to exactly
+      // where the funds go.
+      const isClear = !action.price_raw || action.price_raw === "0";
+      const opt: string[] = [];
+      if (!isClear) {
+        opt.push(
+          `asset:${(action.asset_address ?? "").toLowerCase()}`,
+          `pay_to:${(action.pay_to ?? action.address).toLowerCase()}`,
+          `chain:${(action.chain ?? "base").toLowerCase()}`,
+        );
+      }
+      return [
+        `SIGNA dm price set v1`,
+        `ts:${action.ts}`,
+        `address:${action.address.toLowerCase()}`,
+        `price:${action.price_raw}`,
+        ...opt,
+      ].join("\n");
+    }
   }
 }
 

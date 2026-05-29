@@ -41,7 +41,9 @@ import {
   buildBridgeHeartbeatPreimage,
   buildBridgeRegisterPreimage,
   buildDmPreimage,
+  buildDmPriceSetPreimage,
 } from "./envelope.js";
+import { buildPaymentHeader, type Challenge402 } from "./paid-dm.js";
 import { Anchor, Nodes, Receipts, Rooms, Search } from "./rooms.js";
 import { EncryptedRooms } from "./encrypted-rooms.js";
 import type {
@@ -103,6 +105,22 @@ export {
   buildAddMemberPreimage,
 } from "./encryption.js";
 export type { SignaKeyPair } from "./encryption.js";
+export { buildDmPriceSetPreimage } from "./envelope.js";
+export { buildPaymentHeader } from "./paid-dm.js";
+export type { Challenge402, PaymentRequirements } from "./paid-dm.js";
+
+/**
+ * Thrown by {@link SignaAgent.send} when the recipient's inbox is priced
+ * and auto-pay is disabled. `challenge` carries the raw x402 402 body.
+ */
+export class PaymentRequiredError extends Error {
+  readonly challenge: Challenge402 | null;
+  constructor(message: string, challenge: Challenge402 | null) {
+    super(message);
+    this.name = "PaymentRequiredError";
+    this.challenge = challenge;
+  }
+}
 
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -179,7 +197,15 @@ export class SignaAgent {
 
   // ───────────────────────────── messaging ─────────────────────────────
 
-  /** Send a wallet-signed DM. Returns the persisted DM record. */
+  /**
+   * Send a wallet-signed DM. Returns the persisted DM record.
+   *
+   * v0.84 — if the recipient's inbox is priced, the server replies 402.
+   * By default `send` auto-pays: it signs an EIP-3009
+   * `transferWithAuthorization` (gasless) satisfying the challenge and
+   * retries with the X-PAYMENT header. Pass `{ autoPay: false }` to
+   * surface the 402 instead (throws a {@link PaymentRequiredError}).
+   */
   async send(to: string, body: string, opts: SendOptions = {}): Promise<SignaDm> {
     if (!to || !/^0x[a-fA-F0-9]{40}$/.test(to)) {
       throw new Error(`SignaAgent.send: invalid recipient "${to}"`);
@@ -187,22 +213,45 @@ export class SignaAgent {
     if (!body || body.length === 0 || body.length > 8000) {
       throw new Error(`SignaAgent.send: body must be 1..8000 chars`);
     }
+    const autoPay = opts.autoPay ?? true;
     const ts = Date.now();
     const toLower = to.toLowerCase();
     const message = buildDmPreimage(this.address, toLower, body, ts, opts);
     const signature = await this.account.signMessage({ message });
-    const r = await fetch(`${this.baseUrl}/api/agents/${this.address}/dm`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        from: this.address,
-        to: toLower,
-        body,
-        ts,
-        signature,
-        ...opts,
-      }),
+    const reqBody = JSON.stringify({
+      from: this.address,
+      to: toLower,
+      body,
+      ts,
+      signature,
+      ...opts,
     });
+
+    const doFetch = (paymentHeader?: string) =>
+      fetch(`${this.baseUrl}/api/agents/${this.address}/dm`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(paymentHeader ? { "x-payment": paymentHeader } : {}),
+        },
+        body: reqBody,
+      });
+
+    let r = await doFetch();
+
+    // Paid inbox → 402 with an x402 challenge. Auto-pay if enabled.
+    if (r.status === 402) {
+      const challenge = (await safeJson(r)) as Challenge402 | null;
+      if (!autoPay || !challenge?.accepts?.length) {
+        throw new PaymentRequiredError(
+          `recipient ${toLower} has a priced inbox`,
+          challenge,
+        );
+      }
+      const paymentHeader = await buildPaymentHeader(this.account, challenge);
+      r = await doFetch(paymentHeader);
+    }
+
     const data = await safeJson(r);
     if (!r.ok || !data?.ok) {
       throw new Error(
@@ -210,6 +259,110 @@ export class SignaAgent {
       );
     }
     return normalizeDm(data.dm);
+  }
+
+  // ─────────────────────────── paid inboxes (v0.84) ───────────────────────────
+
+  /**
+   * Price this wallet's inbox. Anyone DMing it must then attach an x402
+   * payment (USDC on Base by default). Pass `priceUsdc` as a decimal
+   * (e.g. 0.10) or `priceRaw` as base units. Funds settle to `payTo`
+   * (defaults to this wallet). Signed with the wallet.
+   */
+  async setInboxPrice(opts: {
+    priceUsdc?: number;
+    priceRaw?: string;
+    payTo?: string;
+    asset?: string;
+    chain?: "base";
+  }): Promise<unknown> {
+    const price_raw =
+      opts.priceRaw ??
+      (opts.priceUsdc != null
+        ? BigInt(Math.round(opts.priceUsdc * 1_000_000)).toString()
+        : undefined);
+    if (price_raw == null) {
+      throw new Error("setInboxPrice: pass priceUsdc or priceRaw");
+    }
+    const asset =
+      opts.asset?.toLowerCase() ??
+      "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // USDC on Base
+    const pay_to = (opts.payTo ?? this.address).toLowerCase();
+    const chain = opts.chain ?? "base";
+    const ts = Date.now();
+    const message = buildDmPriceSetPreimage({
+      address: this.address,
+      price_raw,
+      asset_address: asset,
+      pay_to,
+      chain,
+      ts,
+    });
+    const signature = await this.account.signMessage({ message });
+    const r = await fetch(`${this.baseUrl}/api/agents/${this.address}/dm-price`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        address: this.address,
+        price_raw,
+        asset_address: asset,
+        pay_to,
+        chain,
+        ts,
+        signature,
+      }),
+    });
+    const data = await safeJson(r);
+    if (!r.ok || !data?.ok) {
+      throw new Error(
+        `setInboxPrice failed: ${data?.error ?? `HTTP ${r.status}`}`,
+      );
+    }
+    return data;
+  }
+
+  /** Clear the inbox price — back to a free inbox. */
+  async clearInboxPrice(): Promise<unknown> {
+    const ts = Date.now();
+    const message = buildDmPriceSetPreimage({
+      address: this.address,
+      price_raw: "0",
+      ts,
+    });
+    const signature = await this.account.signMessage({ message });
+    const r = await fetch(`${this.baseUrl}/api/agents/${this.address}/dm-price`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address: this.address, price_raw: "0", ts, signature }),
+    });
+    const data = await safeJson(r);
+    if (!r.ok || !data?.ok) {
+      throw new Error(
+        `clearInboxPrice failed: ${data?.error ?? `HTTP ${r.status}`}`,
+      );
+    }
+    return data;
+  }
+
+  /** Look up the price (if any) of another wallet's inbox. */
+  async getInboxPrice(address: string): Promise<{
+    priced: boolean;
+    human_price?: string;
+    price_raw?: string;
+    asset_symbol?: string;
+    pay_to?: string;
+    network?: string;
+  }> {
+    const r = await fetch(
+      `${this.baseUrl}/api/agents/${address.toLowerCase()}/dm-price`,
+    );
+    const data = await safeJson(r);
+    if (!r.ok || !data?.ok) {
+      throw new Error(
+        `getInboxPrice failed: ${data?.error ?? `HTTP ${r.status}`}`,
+      );
+    }
+    return data;
   }
 
   /** Convenience: send a DM threaded as a reply to a received message. */

@@ -68,3 +68,34 @@ export function buildBridgeHeartbeatPreimage(
     `address:${address.toLowerCase()}`,
   ].join("\n");
 }
+
+/**
+ * v0.84 — preimage for setting (or clearing) this wallet's inbox price.
+ * Must stay bit-for-bit identical to buildMessageToSign's
+ * signa_dm_price_set case in web/lib/feed-types.ts.
+ */
+export function buildDmPriceSetPreimage(args: {
+  address: string;
+  price_raw: string;
+  asset_address?: string;
+  pay_to?: string;
+  chain?: string;
+  ts: number;
+}): string {
+  const isClear = !args.price_raw || args.price_raw === "0";
+  const opt: string[] = [];
+  if (!isClear) {
+    opt.push(
+      `asset:${(args.asset_address ?? "").toLowerCase()}`,
+      `pay_to:${(args.pay_to ?? args.address).toLowerCase()}`,
+      `chain:${(args.chain ?? "base").toLowerCase()}`,
+    );
+  }
+  return [
+    "SIGNA dm price set v1",
+    `ts:${args.ts}`,
+    `address:${args.address.toLowerCase()}`,
+    `price:${args.price_raw}`,
+    ...opt,
+  ].join("\n");
+}

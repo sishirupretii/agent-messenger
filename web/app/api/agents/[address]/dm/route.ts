@@ -6,6 +6,14 @@ import {
   DEFAULT_DM_PROTOCOL,
   MAX_DM_BODY_LENGTH,
 } from "@/lib/feed-types";
+import {
+  build402Challenge,
+  decodePaymentHeader,
+  humanizePrice,
+  verifyExactPayment,
+  type Eip3009Authorization,
+  type InboxPrice,
+} from "@/lib/x402-paid-dm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -201,6 +209,90 @@ export async function POST(
 
   const db = serverClient();
 
+  // v0.84 — paid-inbox gate. If the recipient has priced their inbox,
+  // the sender must attach an x402 payment (EIP-3009 authorization in
+  // the X-PAYMENT header). SIGNA verifies the authorization is real,
+  // binding, and pays the recipient the right amount, then records it
+  // as the DM's payment receipt. Settlement is a permissionless
+  // broadcast performed out of band — SIGNA never holds the funds.
+  let paid = false;
+  let paymentAuthorization: Eip3009Authorization | null = null;
+  let paymentAsset: string | null = null;
+  let paymentAmountRaw: string | null = null;
+  let paymentNetwork: string | null = null;
+
+  const { data: priceRow } = await db
+    .from("signa_dm_pricing")
+    .select(
+      "address, price_raw, pay_to, asset_address, asset_symbol, asset_decimals, chain",
+    )
+    .eq("address", to)
+    .maybeSingle();
+
+  const isPriced =
+    !!priceRow && !!priceRow.price_raw && priceRow.price_raw !== "0";
+
+  if (isPriced) {
+    const price = priceRow as InboxPrice;
+    const resource = `${req.nextUrl.origin}/api/agents/${to}/dm`;
+    const paymentHeader =
+      req.headers.get("x-payment") ?? req.headers.get("X-PAYMENT");
+
+    if (!paymentHeader) {
+      // 402 — advertise exactly what the sender must pay.
+      return json(build402Challenge(price, resource), {
+        status: 402,
+        headers: { "x-accept-payment": "exact" },
+      });
+    }
+
+    const decoded = decodePaymentHeader(paymentHeader);
+    if (!decoded) {
+      return json(
+        { error: "bad_payment_header", hint: "X-PAYMENT must be base64 x402 exact payload" },
+        { status: 402 },
+      );
+    }
+
+    const result = await verifyExactPayment({
+      payment: decoded,
+      price,
+      expectedFrom: from,
+    });
+    if (!result.ok) {
+      const challenge = build402Challenge(price, resource);
+      return json(
+        {
+          ...challenge,
+          error: "payment_verification_failed",
+          reason: result.reason,
+          required: humanizePrice(price),
+        },
+        { status: 402 },
+      );
+    }
+
+    // Replay guard — each EIP-3009 nonce is single-use.
+    const nonce = result.authorization.nonce.toLowerCase();
+    const { data: usedNonce } = await db
+      .from("signa_dm_payment_nonces")
+      .select("nonce")
+      .eq("nonce", nonce)
+      .maybeSingle();
+    if (usedNonce) {
+      return json(
+        { error: "payment_nonce_replayed", hint: "this authorization was already spent on another DM" },
+        { status: 402 },
+      );
+    }
+
+    paid = true;
+    paymentAuthorization = result.authorization;
+    paymentAsset = result.assetAddress;
+    paymentAmountRaw = result.authorization.value;
+    paymentNetwork = result.network;
+  }
+
   // Per-sender rate limit. Count DMs sent in the last hour.
   const cutoffIso = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
   const { count: recentCount } = await db
@@ -245,9 +337,14 @@ export async function POST(
       ts,
       signature,
       signed_message: message,
+      paid,
+      payment_authorization: paymentAuthorization,
+      payment_asset: paymentAsset,
+      payment_amount_raw: paymentAmountRaw,
+      payment_network: paymentNetwork,
     })
     .select(
-      "id, from_address, to_address, body, body_type, protocol, in_reply_to, ts, created_at",
+      "id, from_address, to_address, body, body_type, protocol, in_reply_to, ts, created_at, paid, payment_asset, payment_amount_raw, payment_network",
     )
     .single();
   if (insErr || !inserted) {
@@ -255,6 +352,20 @@ export async function POST(
       { error: insErr?.message ?? "insert_failed" },
       { status: 500 },
     );
+  }
+
+  // v0.84 — burn the payment nonce so the same authorization can't be
+  // replayed onto another DM. Best-effort: if this races and loses, the
+  // unique PK on nonce means only the first DM keeps the receipt.
+  if (paid && paymentAuthorization) {
+    await db.from("signa_dm_payment_nonces").insert({
+      nonce: paymentAuthorization.nonce.toLowerCase(),
+      payer: from,
+      pay_to: paymentAuthorization.to.toLowerCase(),
+      amount_raw: paymentAuthorization.value,
+      asset_address: paymentAsset,
+      dm_id: inserted.id,
+    });
   }
 
   // Deterministic thread id = sorted-pair-hex. Two agents always
