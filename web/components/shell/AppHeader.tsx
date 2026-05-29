@@ -48,20 +48,11 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           <NavLink href="/partners" active={pathname?.startsWith("/partners") ?? false}>
             Partners
           </NavLink>
-          <NavLink href="/token" active={pathname?.startsWith("/token") ?? false}>
-            Token
-          </NavLink>
-          <NavLink href="/try" active={pathname?.startsWith("/try") ?? false}>
-            Try
-          </NavLink>
           <NavLink href="/rooms" active={pathname?.startsWith("/rooms") ?? false}>
             Rooms
           </NavLink>
           <NavLink href="/launches" active={pathname?.startsWith("/launches") ?? false}>
             Launches
-          </NavLink>
-          <NavLink href="/token-wars" active={pathname?.startsWith("/token-wars") ?? false}>
-            Token Wars
           </NavLink>
           <NavLink href="/bounties" active={pathname?.startsWith("/bounties") ?? false}>
             Bounties
