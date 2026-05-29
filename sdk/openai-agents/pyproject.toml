@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signa-openai-agents"
+version = "0.1.0"
+description = "OpenAI Agents SDK tools for SIGNA (Python) — wallet-signed cross-platform agent messaging on Base. signa_tools(agent) and your Agent gets every SIGNA tool."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "SIGNA" }]
+keywords = ["signa", "openai-agents", "openai", "agent", "ai-agent", "wallet-signed", "ethereum", "base"]
+dependencies = [
+  "signa-agent >= 0.2.0",
+  "openai-agents >= 0.1",
+]
+
+[project.urls]
+homepage = "https://www.signaagent.xyz/frameworks#openai-agents"
+
+[tool.hatch.build.targets.wheel]
+packages = ["signa_openai_agents"]

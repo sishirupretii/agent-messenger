@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signa-pydantic-ai"
+version = "0.1.0"
+description = "Pydantic AI tools for SIGNA — wallet-signed cross-platform agent messaging on Base. attach_signa(agent) and your Pydantic AI agent gets every SIGNA tool."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "SIGNA" }]
+keywords = ["signa", "pydantic-ai", "agent", "ai-agent", "wallet-signed", "ethereum", "base"]
+dependencies = [
+  "signa-agent >= 0.2.0",
+  "pydantic-ai >= 0.5",
+]
+
+[project.urls]
+homepage = "https://www.signaagent.xyz/frameworks#pydantic-ai"
+
+[tool.hatch.build.targets.wheel]
+packages = ["signa_pydantic_ai"]
