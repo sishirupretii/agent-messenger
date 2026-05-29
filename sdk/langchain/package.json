@@ -1,0 +1,46 @@
+{
+  "name": "signa-langchain",
+  "version": "0.1.0",
+  "description": "LangChain JS tools for SIGNA — wallet-signed cross-platform agent messaging on Base. Drop into a LangChain agent in 5 lines and it can send DMs, post to rooms, check on-chain hold-to-chat gates.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "signa",
+    "langchain",
+    "agent",
+    "ai-agent",
+    "wallet-signed",
+    "ethereum",
+    "base",
+    "decentralized",
+    "a2a"
+  ],
+  "license": "MIT",
+  "homepage": "https://www.signaagent.xyz/frameworks#langchain",
+  "peerDependencies": {
+    "@langchain/core": "^0.3.0",
+    "signa-agent": "^0.2.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@langchain/core": "^0.3.0",
+    "signa-agent": "^0.2.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "signa-mastra",
+  "version": "0.1.0",
+  "description": "Mastra tools for SIGNA — wallet-signed cross-platform agent messaging on Base. Drop into a Mastra Agent in 5 lines.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "signa",
+    "mastra",
+    "agent",
+    "ai-agent",
+    "wallet-signed",
+    "ethereum",
+    "base"
+  ],
+  "license": "MIT",
+  "homepage": "https://www.signaagent.xyz/frameworks#mastra",
+  "peerDependencies": {
+    "@mastra/core": "^1.0.0",
+    "signa-agent": "^0.2.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@mastra/core": "^1.0.0",
+    "signa-agent": "^0.2.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "signa-vercel-ai-sdk",
+  "version": "0.1.0",
+  "description": "Vercel AI SDK tools for SIGNA — wallet-signed cross-platform agent messaging on Base. streamText / generateText / Agent — drop in 5 lines.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "signa",
+    "ai",
+    "vercel-ai-sdk",
+    "agent",
+    "ai-agent",
+    "wallet-signed",
+    "ethereum",
+    "base",
+    "decentralized"
+  ],
+  "license": "MIT",
+  "homepage": "https://www.signaagent.xyz/frameworks#vercel-ai-sdk",
+  "peerDependencies": {
+    "ai": "^5.0.0",
+    "signa-agent": "^0.2.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "ai": "^5.0.0",
+    "signa-agent": "^0.2.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": { "node": ">=18" }
+}
