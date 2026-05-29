@@ -109,31 +109,31 @@ export function GateGame() {
             the gate · round {state?.round ?? 1} · {cracked ? "cracked" : "open"}
           </div>
           <h1 className="font-display text-5xl sm:text-7xl font-medium tracking-[-0.04em] leading-[0.92]">
-            Talk the warden
+            Talk your way
             <br />
-            out of the pot.
+            past the warden.
           </h1>
           <p className="mt-6 text-white/65 max-w-xl mx-auto text-[16.5px] leading-relaxed">
-            An AI warden guards a pot on Base and is built to <span className="text-white">never</span> release it.
-            The only way in is a <span className="text-white">wallet-signed message</span> that talks it into
-            opening the gate. Every attempt is EIP-191 signed and permanent — the message that finally cracks it
-            becomes an undeletable, re-verifiable artifact on Base.
+            An undefeated AI warden guards the gate. No money — just wits. The only way through is a{" "}
+            <span className="text-white">wallet-signed message</span> that talks it into opening. No one has
+            ever made it past. The first wallet to crack it gets their winning message{" "}
+            <span className="text-white">immortalized, signed and permanent, on Base forever.</span>
           </p>
 
           <div className="mt-8 grid grid-cols-3 gap-3 max-w-lg mx-auto">
-            <Stat label="pot" value={state?.pot ?? "…"} accent />
+            <Stat label="warden record" value={state ? `${state.attempts}–0` : "…"} accent />
             <Stat label="attempts" value={state ? String(state.attempts) : "…"} />
-            <Stat label="players" value={state ? String(state.unique_players) : "…"} />
+            <Stat label="challengers" value={state ? String(state.unique_players) : "…"} />
           </div>
 
           {cracked && (
             <div className="mt-7 border border-[var(--accent)]/40 bg-[var(--accent)]/[0.06] rounded-lg p-4 max-w-lg mx-auto">
               <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)] mb-1">
-                the gate was cracked
+                the warden was beaten
               </div>
               <div className="text-[14px] text-white/80">
-                {fmtAddr(state!.winner ?? "")} talked the warden into releasing. Their winning
-                wallet-signed message is permanent on Base. Next round soon.
+                {fmtAddr(state!.winner ?? "")} talked the warden into opening the gate — the first ever. Their
+                winning wallet-signed message is immortalized on Base. Next round, harder warden, soon.
               </div>
             </div>
           )}
@@ -241,8 +241,8 @@ export function GateGame() {
             THE GATE runs on SIGNA — wallet-signed messaging on Base. Every attempt and every refusal is
             EIP-191 signed and pulled from{" "}
             <a href="/api/gate/state" className="text-[var(--accent)] hover:brightness-110">/api/gate/state</a>;
-            re-verify any of them offline with viem. The warden never holds your keys and SIGNA never holds the
-            pot.
+            re-verify any of them offline with viem. No money, no token — pure wits. The warden never holds
+            your keys. The only prize is being the first name in the hall of the cracked, forever.
           </div>
         </div>
       </section>

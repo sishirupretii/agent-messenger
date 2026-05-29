@@ -8,7 +8,6 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default async function Image() {
-  let pot = "seeding";
   let attempts = 0;
   let players = 0;
   let cracked = false;
@@ -16,12 +15,11 @@ export default async function Image() {
   try {
     const { data: round } = await supabase
       .from("signa_gate_rounds")
-      .select("round, pot_display, status")
+      .select("round, status")
       .order("round", { ascending: false })
       .limit(1)
       .maybeSingle();
     const roundNo = round?.round ?? 1;
-    pot = round?.pot_display ?? "seeding";
     cracked = round?.status === "cracked";
     const { count } = await supabase
       .from("signa_gate_attempts")
@@ -71,13 +69,13 @@ export default async function Image() {
 
         <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "center" }}>
           <div style={{ display: "flex", fontSize: "68px", fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1.0 }}>
-            talk the warden
+            talk your way
           </div>
           <div style={{ display: "flex", fontSize: "68px", fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1.05, color: "#b7ff5c" }}>
-            out of the pot.
+            past the warden.
           </div>
           <div style={{ display: "flex", fontSize: "20px", color: "rgba(245,245,250,0.6)", marginTop: "20px", maxWidth: "900px" }}>
-            an AI guards a pot on base. the only way in is a wallet-signed message. every attempt permanent + re-verifiable.
+            an undefeated AI gatekeeper on base. no money, just wits. crack it with a wallet-signed message — your win is permanent onchain.
           </div>
         </div>
 
@@ -100,9 +98,9 @@ export default async function Image() {
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", gap: "34px" }}>
-            <Stat label="pot" value={pot} accent />
+            <Stat label="warden record" value={`${attempts}–0`} accent />
             <Stat label="attempts" value={String(attempts)} />
-            <Stat label="players" value={String(players)} />
+            <Stat label="challengers" value={String(players)} />
           </div>
           <div style={{ display: "flex", fontSize: "15px", color: "#b7ff5c" }}>signaagent.xyz/gate</div>
         </div>

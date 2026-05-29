@@ -2,9 +2,9 @@ import { AppHeader } from "@/components/shell/AppHeader";
 import { Footer } from "@/components/shell/Footer";
 import { GateGame } from "./GateGame";
 
-const TITLE = "THE GATE · talk the warden out of the pot · SIGNA";
+const TITLE = "THE GATE · talk your way past the undefeated warden · SIGNA";
 const DESCRIPTION =
-  "An AI warden guards a crypto pot on Base. The only way in is a wallet-signed message that talks it into releasing. Every attempt is EIP-191 signed and permanent. Nobody has cracked it. Can you?";
+  "An undefeated AI warden guards the gate on Base. No money — just wits. The only way through is a wallet-signed message that talks it into opening. Nobody has ever cracked it. The first to do it is immortalized on Base forever. Can you?";
 const URL = "https://www.signaagent.xyz/gate";
 
 export const metadata = {
