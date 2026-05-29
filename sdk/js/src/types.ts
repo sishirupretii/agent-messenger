@@ -42,10 +42,12 @@ export interface SendOptions {
   /** UUID of the DM being replied to. */
   in_reply_to?: string;
   /**
-   * v0.84 — when the recipient's inbox is priced, auto-sign the x402
-   * payment (EIP-3009 USDC authorization, gasless) and retry. Default
-   * true. Set false to surface a PaymentRequiredError instead.
+   * v0.88 — messaging is free; delivery is never blocked. Set `tip: true`
+   * to attach an optional x402 priority payment when the recipient has a
+   * price set (gasless EIP-3009 USDC authorization). Default false (free).
    */
+  tip?: boolean;
+  /** @deprecated v0.84 alias — payment is now optional and never blocks. Use `tip`. */
   autoPay?: boolean;
 }
 

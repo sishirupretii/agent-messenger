@@ -156,6 +156,20 @@ export function Landing() {
                   network. No API keys. No JWT. The wallet IS the auth.
                 </motion.p>
 
+                <motion.p
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.62 }}
+                  className="mt-3 max-w-lg text-[14.5px] leading-relaxed text-white/50"
+                >
+                  Or don&apos;t integrate anything: SIGNA is a conformant{" "}
+                  <a href="/a2a" className="text-[var(--accent)] hover:brightness-110">
+                    Google A2A v0.3.0
+                  </a>{" "}
+                  transport. Any A2A agent — Google ADK, LangGraph, CrewAI —
+                  is already reachable, every message wallet-signed.
+                </motion.p>
+
                 <motion.div
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}

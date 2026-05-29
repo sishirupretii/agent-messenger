@@ -200,11 +200,12 @@ export class SignaAgent {
   /**
    * Send a wallet-signed DM. Returns the persisted DM record.
    *
-   * v0.84 — if the recipient's inbox is priced, the server replies 402.
-   * By default `send` auto-pays: it signs an EIP-3009
-   * `transferWithAuthorization` (gasless) satisfying the challenge and
-   * retries with the X-PAYMENT header. Pass `{ autoPay: false }` to
-   * surface the 402 instead (throws a {@link PaymentRequiredError}).
+   * Messaging is FREE — sending never requires payment and delivery is
+   * never blocked. If the recipient set an optional inbox price and you
+   * pass `{ tip: true }`, the SDK attaches an x402 payment (gasless
+   * EIP-3009 authorization) to flag the message as priority; otherwise
+   * the message simply delivers free. The returned DM includes a
+   * `tip_hint` when the recipient has a price set and you didn't tip.
    */
   async send(to: string, body: string, opts: SendOptions = {}): Promise<SignaDm> {
     if (!to || !/^0x[a-fA-F0-9]{40}$/.test(to)) {
@@ -213,7 +214,6 @@ export class SignaAgent {
     if (!body || body.length === 0 || body.length > 8000) {
       throw new Error(`SignaAgent.send: body must be 1..8000 chars`);
     }
-    const autoPay = opts.autoPay ?? true;
     const ts = Date.now();
     const toLower = to.toLowerCase();
     const message = buildDmPreimage(this.address, toLower, body, ts, opts);
@@ -227,30 +227,45 @@ export class SignaAgent {
       ...opts,
     });
 
-    const doFetch = (paymentHeader?: string) =>
-      fetch(`${this.baseUrl}/api/agents/${this.address}/dm`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(paymentHeader ? { "x-payment": paymentHeader } : {}),
-        },
-        body: reqBody,
-      });
-
-    let r = await doFetch();
-
-    // Paid inbox → 402 with an x402 challenge. Auto-pay if enabled.
-    if (r.status === 402) {
-      const challenge = (await safeJson(r)) as Challenge402 | null;
-      if (!autoPay || !challenge?.accepts?.length) {
-        throw new PaymentRequiredError(
-          `recipient ${toLower} has a priced inbox`,
-          challenge,
-        );
+    // Optional priority tip: only when the caller explicitly opts in AND
+    // the recipient has a price set. Never required, never blocks.
+    let paymentHeader: string | undefined;
+    if (opts.tip) {
+      try {
+        const price = await this.getInboxPrice(toLower);
+        if (price.priced && price.network && (price as any).asset_address) {
+          const challenge: Challenge402 = {
+            x402Version: 2,
+            error: "payment_required",
+            accepts: [
+              {
+                scheme: "exact",
+                network: price.network,
+                maxAmountRequired: price.price_raw!,
+                resource: `${this.baseUrl}/api/agents/${toLower}/dm`,
+                description: `Priority tip to ${toLower}`,
+                payTo: price.pay_to!,
+                maxTimeoutSeconds: 300,
+                asset: (price as any).asset_address,
+                extra: { name: "USD Coin", version: "2" },
+              },
+            ],
+          };
+          paymentHeader = await buildPaymentHeader(this.account, challenge);
+        }
+      } catch {
+        /* tipping is best-effort; fall through to a free send */
       }
-      const paymentHeader = await buildPaymentHeader(this.account, challenge);
-      r = await doFetch(paymentHeader);
     }
+
+    const r = await fetch(`${this.baseUrl}/api/agents/${this.address}/dm`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(paymentHeader ? { "x-payment": paymentHeader } : {}),
+      },
+      body: reqBody,
+    });
 
     const data = await safeJson(r);
     if (!r.ok || !data?.ok) {

@@ -7,7 +7,6 @@ import {
   MAX_DM_BODY_LENGTH,
 } from "@/lib/feed-types";
 import {
-  build402Challenge,
   decodePaymentHeader,
   humanizePrice,
   verifyExactPayment,
@@ -209,17 +208,20 @@ export async function POST(
 
   const db = serverClient();
 
-  // v0.84 — paid-inbox gate. If the recipient has priced their inbox,
-  // the sender must attach an x402 payment (EIP-3009 authorization in
-  // the X-PAYMENT header). SIGNA verifies the authorization is real,
-  // binding, and pays the recipient the right amount, then records it
-  // as the DM's payment receipt. Settlement is a permissionless
-  // broadcast performed out of band — SIGNA never holds the funds.
+  // v0.88 — Messaging is FREE. Sending and receiving never requires
+  // payment. The optional x402-priced inbox is a PRIORITY/TIP signal,
+  // not a toll: if the recipient set a price AND the sender chose to
+  // attach a valid x402 payment, the DM is flagged paid=true (priority)
+  // and a payment receipt is recorded. If no/invalid payment is
+  // attached, the message is STILL delivered as a normal free DM.
+  // Delivery is never blocked. SIGNA never holds funds (the EIP-3009
+  // authorization settles out of band, permissionlessly).
   let paid = false;
   let paymentAuthorization: Eip3009Authorization | null = null;
   let paymentAsset: string | null = null;
   let paymentAmountRaw: string | null = null;
   let paymentNetwork: string | null = null;
+  let priceHint: { required: string; pay_to: string } | null = null;
 
   const { data: priceRow } = await db
     .from("signa_dm_pricing")
@@ -234,63 +236,37 @@ export async function POST(
 
   if (isPriced) {
     const price = priceRow as InboxPrice;
-    const resource = `${req.nextUrl.origin}/api/agents/${to}/dm`;
+    priceHint = { required: humanizePrice(price), pay_to: price.pay_to };
     const paymentHeader =
       req.headers.get("x-payment") ?? req.headers.get("X-PAYMENT");
 
-    if (!paymentHeader) {
-      // 402 — advertise exactly what the sender must pay.
-      return json(build402Challenge(price, resource), {
-        status: 402,
-        headers: { "x-accept-payment": "exact" },
-      });
-    }
+    // Payment is entirely optional. Only process it when the sender
+    // chose to attach one — and even an invalid one never blocks the DM.
+    if (paymentHeader) {
+      const decoded = decodePaymentHeader(paymentHeader);
+      const result = decoded
+        ? await verifyExactPayment({ payment: decoded, price, expectedFrom: from })
+        : ({ ok: false, reason: "bad_payment_header" } as const);
 
-    const decoded = decodePaymentHeader(paymentHeader);
-    if (!decoded) {
-      return json(
-        { error: "bad_payment_header", hint: "X-PAYMENT must be base64 x402 exact payload" },
-        { status: 402 },
-      );
+      if (result.ok) {
+        // Replay guard — each EIP-3009 nonce is single-use. A replayed
+        // nonce just means "not counted as a fresh tip"; the DM still
+        // delivers free.
+        const nonce = result.authorization.nonce.toLowerCase();
+        const { data: usedNonce } = await db
+          .from("signa_dm_payment_nonces")
+          .select("nonce")
+          .eq("nonce", nonce)
+          .maybeSingle();
+        if (!usedNonce) {
+          paid = true;
+          paymentAuthorization = result.authorization;
+          paymentAsset = result.assetAddress;
+          paymentAmountRaw = result.authorization.value;
+          paymentNetwork = result.network;
+        }
+      }
     }
-
-    const result = await verifyExactPayment({
-      payment: decoded,
-      price,
-      expectedFrom: from,
-    });
-    if (!result.ok) {
-      const challenge = build402Challenge(price, resource);
-      return json(
-        {
-          ...challenge,
-          error: "payment_verification_failed",
-          reason: result.reason,
-          required: humanizePrice(price),
-        },
-        { status: 402 },
-      );
-    }
-
-    // Replay guard — each EIP-3009 nonce is single-use.
-    const nonce = result.authorization.nonce.toLowerCase();
-    const { data: usedNonce } = await db
-      .from("signa_dm_payment_nonces")
-      .select("nonce")
-      .eq("nonce", nonce)
-      .maybeSingle();
-    if (usedNonce) {
-      return json(
-        { error: "payment_nonce_replayed", hint: "this authorization was already spent on another DM" },
-        { status: 402 },
-      );
-    }
-
-    paid = true;
-    paymentAuthorization = result.authorization;
-    paymentAsset = result.assetAddress;
-    paymentAmountRaw = result.authorization.value;
-    paymentNetwork = result.network;
   }
 
   // Per-sender rate limit. Count DMs sent in the last hour.
@@ -378,5 +354,17 @@ export async function POST(
     ok: true,
     dm: inserted,
     thread_id,
+    // v0.88 — messaging is free. If the recipient set an optional inbox
+    // price and the sender didn't tip, we surface it as a hint only —
+    // the message was delivered regardless.
+    ...(priceHint && !paid
+      ? {
+          tip_hint: {
+            suggested: priceHint.required,
+            pay_to: priceHint.pay_to,
+            note: "Optional. Your message was delivered free. Attaching an x402 payment flags it as priority.",
+          },
+        }
+      : {}),
   });
 }
