@@ -103,6 +103,27 @@ export async function POST(
     `Powered by SIGNA wallet-signed chat.`,
   ].join(" · ").slice(0, 500);
 
+  // v0.83 — optional $MIROSHARK hold-to-chat gate on the sim room.
+  // Reads stay open. Posts require the holder. Server-enforced via
+  // viem.balanceOf on Base mainnet (existing gating machinery).
+  const gateTokenRaw = process.env.MIROSHARK_TOKEN_ADDRESS;
+  const gateChain = process.env.MIROSHARK_TOKEN_CHAIN ?? "base";
+  const gateMinRaw =
+    process.env.MIROSHARK_TOKEN_MIN_RAW ?? "1000000000000000000"; // 1 token @ 18 dec
+  const gateTokenLower =
+    gateTokenRaw && /^0x[a-fA-F0-9]{40}$/.test(gateTokenRaw)
+      ? gateTokenRaw.toLowerCase()
+      : null;
+
+  const gateOpt: string[] = [];
+  if (gateTokenLower) {
+    gateOpt.push(
+      `gate_token:${gateTokenLower}`,
+      `gate_chain:${gateChain.toLowerCase()}`,
+      `gate_min:${gateMinRaw}`,
+    );
+  }
+
   const roomTs = Date.now();
   const roomMessage = [
     "SIGNA room create v1",
@@ -112,6 +133,7 @@ export async function POST(
     `slug:${slug}`,
     `public:true`,
     `description:${description}`,
+    ...gateOpt,
   ].join("\n");
   const roomSig = await botAccount.signMessage({ message: roomMessage });
 
@@ -127,8 +149,11 @@ export async function POST(
       ts: roomTs,
       signature: roomSig,
       signed_message: roomMessage,
+      gate_token_address: gateTokenLower,
+      gate_chain: gateTokenLower ? gateChain.toLowerCase() : null,
+      gate_min_balance_raw: gateTokenLower ? gateMinRaw : null,
     })
-    .select("id, slug, name")
+    .select("id, slug, name, gate_token_address, gate_chain, gate_min_balance_raw")
     .single();
 
   if (roomErr) {
@@ -182,6 +207,66 @@ export async function POST(
 
   return NextResponse.json(
     { ok: true, slug, created: true, room: createdRoom },
+    { status: 200, headers: CORS },
+  );
+}
+
+/**
+ * GET /api/miroshark/[simId]/room
+ *
+ * Returns the SIGNA room (if any) attached to this sim id. Lets the
+ * MiroShark share page drop a single "Discuss this sim on SIGNA" link
+ * without needing to call the POST creator.
+ */
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ simId: string }> },
+) {
+  const { simId: raw } = await params;
+  const simId = String(raw ?? "").trim();
+  if (!simId) {
+    return NextResponse.json(
+      { ok: false, error: "invalid_sim_id" },
+      { status: 400, headers: CORS },
+    );
+  }
+  const slug = slugForSim(simId);
+  const { data: room } = await supabase
+    .from("signa_rooms")
+    .select(
+      "slug, name, description, gate_token_address, gate_chain, gate_min_balance_raw, gate_token_symbol, ts",
+    )
+    .eq("slug", slug)
+    .maybeSingle();
+  if (!room) {
+    return NextResponse.json(
+      {
+        ok: true,
+        slug,
+        exists: false,
+        join_url: null,
+        create_url: `/api/miroshark/${encodeURIComponent(simId)}/room`,
+        hint: "POST to create_url to lazy-mint the sim discussion room",
+      },
+      { status: 200, headers: CORS },
+    );
+  }
+  return NextResponse.json(
+    {
+      ok: true,
+      slug: room.slug,
+      exists: true,
+      join_url: `https://www.signaagent.xyz/rooms/${room.slug}`,
+      gate: room.gate_token_address
+        ? {
+            token_address: room.gate_token_address,
+            chain: room.gate_chain,
+            min_balance_raw: room.gate_min_balance_raw,
+            symbol: room.gate_token_symbol ?? null,
+          }
+        : null,
+      room,
+    },
     { status: 200, headers: CORS },
   );
 }
