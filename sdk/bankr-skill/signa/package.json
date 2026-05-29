@@ -1,0 +1,9 @@
+{
+  "name": "bankr-skill-signa-verify",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "signa-agent": "file:../../js/signa-agent-0.3.0.tgz",
+    "viem": "^2.21.0"
+  }
+}
