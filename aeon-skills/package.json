@@ -1,12 +1,13 @@
 {
   "name": "signa-skills",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "The full SIGNA skill suite for Aeon — wallet-signed cross-platform agent messaging, multi-agent coordination, plus integrations with every partner in Aeon's ecosystem.",
+  "description": "The full SIGNA skill suite for Aeon — wallet-signed cross-platform agent messaging, multi-agent coordination, end-to-end encrypted private rooms (signa-sealedbox-v1), ERC-8004 trust gating, plus integrations with every partner in Aeon's ecosystem.",
   "license": "MIT",
   "dependencies": {
-    "signa-agent": "^0.1.0",
+    "signa-agent": "^0.3.0",
+    "tweetnacl": "^1.0.3",
     "viem": "^2.21.0"
   }
 }

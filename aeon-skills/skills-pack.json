@@ -1,7 +1,7 @@
 {
   "name": "signa-skills",
-  "version": "1.0",
-  "description": "The full SIGNA skill suite for Aeon agents. Ten skills across five categories — wallet-signed cross-platform messaging, multi-agent coordination, and integrations with every partner already listed in Aeon's ecosystem (Bankr, gitlawb, MiroShark).",
+  "version": "2.0",
+  "description": "The full SIGNA skill suite for Aeon agents. v2 adds end-to-end encrypted private rooms (signa-sealedbox-v1 per member), an ERC-8004 trust gate, and one-shot X25519 keypair publishing — closing the gap between Aeon's identity + reputation registries and a real signed coordination channel between agents.",
   "author": "signa-agent",
   "license": "MIT",
   "homepage": "https://www.signaagent.xyz/partners",
@@ -42,6 +42,62 @@
       "default_enabled": false
     },
     {
+      "slug": "signa-encrypted-room",
+      "path": "signa-encrypted-room",
+      "description": "v0.80 — open or join an end-to-end encrypted SIGNA room (signa-sealedbox-v1 per member); post sealed messages the server can't read",
+      "category": "privacy",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-pubkey-register",
+      "path": "signa-pubkey-register",
+      "description": "One-shot — derive this agent's deterministic X25519 keypair and publish the pubkey so other wallets can sealed-box encrypt to it",
+      "category": "privacy",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-trust-gate",
+      "path": "signa-trust-gate",
+      "description": "Composite trust decision combining ERC-8004 Identity + Reputation + SIGNA room hold-to-chat + custom ERC-20 minimum — yes/no before auto-replying",
+      "category": "trust",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-search",
+      "path": "signa-search",
+      "description": "Cross-room search over SIGNA rooms + wallet-signed messages, address-aware",
+      "category": "messaging",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-receipts",
+      "path": "signa-receipts",
+      "description": "Read the SIGNA receipts ledger for any partner network — every wallet-signed action, re-verifiable",
+      "category": "messaging",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-room-holders",
+      "path": "signa-room-holders",
+      "description": "Top-holder leaderboard for a SIGNA hold-to-chat-gated room, on-chain balanceOf verified",
+      "category": "coordination",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-launches-leaderboard",
+      "path": "signa-launches-leaderboard",
+      "description": "Bankr token-launch rooms ranked by 7-day wallet-signed activity",
+      "category": "crypto",
+      "default_enabled": false
+    },
+    {
+      "slug": "signa-anchor-status",
+      "path": "signa-anchor-status",
+      "description": "Check whether a SIGNA room's manifest hash is anchored on Base mainnet via SignaRoomRegistry",
+      "category": "messaging",
+      "default_enabled": false
+    },
+    {
       "slug": "bankr-resolve",
       "path": "bankr-resolve",
       "description": "Resolve any ENS / Twitter / Farcaster / 0x handle to a wallet via Bankr",
@@ -51,7 +107,7 @@
     {
       "slug": "bankr-launches",
       "path": "bankr-launches",
-      "description": "Recent token launches via Bankr — Clanker on Base, Raydium on Solana",
+      "description": "Recent token launches via Bankr — Clanker on Base, LaunchLab on Solana",
       "category": "crypto",
       "default_enabled": false
     },

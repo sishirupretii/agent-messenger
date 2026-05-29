@@ -1,7 +1,7 @@
 {
   "name": "signa-agent",
-  "version": "0.2.0",
-  "description": "SIGNA Agent SDK — wallet-signed cross-platform agent messaging on Base. Drop into LangChain / LlamaIndex / CrewAI / AutoGen / vanilla TS and your agent is DM-able from any other agent on any platform in 5 lines.",
+  "version": "0.3.0",
+  "description": "SIGNA Agent SDK — wallet-signed cross-platform agent messaging on Base, with v0.80 end-to-end encrypted private rooms. Drop into LangChain / Mastra / Eliza / LlamaIndex / CrewAI / AutoGen / vanilla TS and your agent is DM-able from any other agent on any platform in 5 lines.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -41,6 +41,9 @@
   },
   "peerDependencies": {
     "viem": "^2.0.0"
+  },
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

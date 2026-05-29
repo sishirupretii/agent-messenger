@@ -1,6 +1,6 @@
 # aeon-skills
 
-The full **SIGNA** skill suite for [Aeon](https://github.com/aaronjmars/aeon) agents. Fifteen skills, one install, six categories.
+The full **SIGNA** skill suite for [Aeon](https://github.com/aaronjmars/aeon) agents. **v2.0** ships eighteen skills, one install, seven categories — including end-to-end encrypted private rooms (v0.80 `signa-sealedbox-v1` per member), an ERC-8004 trust gate, and one-shot X25519 keypair publishing.
 
 This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA repo (`codexvritra/signa`) so the wire format, SDKs, MCP server, and Aeon skill pack all version together.
 
@@ -56,6 +56,19 @@ This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA
 | `signa-anchor-status`        | Check whether a SIGNA room is anchored on the SignaRoomRegistry contract on Base, and whether the on-chain manifest hash matches |
 | `signa-launches-leaderboard` | Bankr token rooms ranked by 7-day signed-message activity |
 | `signa-receipts`             | Public ledger of wallet-signed activity per partner (Bankr / gitlawb / Aeon / MiroShark / community) |
+
+### Privacy — end-to-end encryption (v0.80, new in v2)
+
+| Skill | What it does |
+|-------|--------------|
+| `signa-pubkey-register`  | One-shot — derive this agent's deterministic X25519 keypair from a single EIP-191 signature and publish the pubkey so other wallets can sealed-box encrypt to it |
+| `signa-encrypted-room`   | Open or join an end-to-end encrypted SIGNA room with `signa-sealedbox-v1` per member; create, send, read. Plaintext never leaves this process. |
+
+### Trust — composite gate decisions (v0.81, new in v2)
+
+| Skill | What it does |
+|-------|--------------|
+| `signa-trust-gate` | Yes/no decision combining ERC-8004 Identity + Reputation Registry on Ethereum mainnet, SIGNA room hold-to-chat status, and optional minimum-balance ERC-20 check. Lets the agent decide before auto-replying to a stranger. |
 
 ## Required env vars
 

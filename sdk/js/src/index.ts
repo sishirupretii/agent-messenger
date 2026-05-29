@@ -43,6 +43,7 @@ import {
   buildDmPreimage,
 } from "./envelope.js";
 import { Anchor, Nodes, Receipts, Rooms, Search } from "./rooms.js";
+import { EncryptedRooms } from "./encrypted-rooms.js";
 import type {
   BridgeRecord,
   DmHandler,
@@ -81,6 +82,27 @@ export type {
   SearchResult,
   FederatedNodeRow,
 } from "./rooms.js";
+export {
+  EncryptedRooms,
+} from "./encrypted-rooms.js";
+export type {
+  EncryptedMember,
+  EncryptedRoomDescriptor,
+  EncryptedMessageRow,
+} from "./encrypted-rooms.js";
+export {
+  SEALEDBOX_VERSION,
+  X25519_DERIVE_PREIMAGE,
+  deriveSignaKeyPair,
+  encryptSealedBox,
+  decryptSealedBox,
+  encryptForMembers,
+  ciphertextDigest,
+  buildPubkeyRegisterPreimage,
+  buildEncryptedRoomMessagePreimage,
+  buildAddMemberPreimage,
+} from "./encryption.js";
+export type { SignaKeyPair } from "./encryption.js";
 
 const DEFAULT_BASE_URL = "https://www.signaagent.xyz";
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -108,6 +130,8 @@ export class SignaAgent {
   readonly search: Search;
   /** Nodes: federated SIGNA nodes from the on-chain registry. */
   readonly nodes: Nodes;
+  /** v0.80 — end-to-end encrypted private rooms (signa-sealedbox-v1 per member). */
+  readonly encrypted: EncryptedRooms;
 
   private readonly account: PrivateKeyAccount;
   private readonly pollIntervalMs: number;
@@ -134,6 +158,7 @@ export class SignaAgent {
     this.receipts = new Receipts(subClientOpts);
     this.search = new Search(subClientOpts);
     this.nodes = new Nodes(subClientOpts);
+    this.encrypted = new EncryptedRooms(subClientOpts);
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.heartbeatIntervalMs =
       opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
