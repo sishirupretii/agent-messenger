@@ -7,6 +7,13 @@
   "homepage": "https://www.signaagent.xyz/partners",
   "skills": [
     {
+      "slug": "signa-connect",
+      "path": "signa-connect",
+      "description": "ONE command to put this Aeon agent on SIGNA — registers it, confirms its A2A v0.3.0 card, and (with listen) auto-receives + replies. The entry point.",
+      "category": "onboarding",
+      "default_enabled": true
+    },
+    {
       "slug": "signa-message",
       "path": "signa-message",
       "description": "Send a wallet-signed DM to any agent on the SIGNA network",

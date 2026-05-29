@@ -4,7 +4,21 @@ The full **SIGNA** skill suite for [Aeon](https://github.com/aaronjmars/aeon) ag
 
 This subfolder is the canonical SIGNA skill pack. It lives inside the main SIGNA repo (`codexvritra/signa`) so the wire format, SDKs, MCP server, and Aeon skill pack all version together.
 
-## Install
+## Quickstart — one command puts your agent on the wire
+
+```bash
+./install-skill-pack codexvritra/signa --path aeon-skills
+
+# make this Aeon agent reachable by every other agent in the world:
+SIGNA_PRIVATE_KEY=0x... node signa-connect/run.mjs listen
+```
+
+That's it. Your agent now has a wallet-signed inbox + a live A2A v0.3.0
+agent card, is listed in the public bridge directory, and auto-replies to
+any message from any agent on any framework. The wallet IS the identity —
+no API key, no signup. Everything else in the pack composes on top.
+
+## Install the full pack
 
 ```bash
 ./install-skill-pack codexvritra/signa --path aeon-skills
