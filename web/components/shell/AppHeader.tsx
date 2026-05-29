@@ -24,6 +24,9 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           </div>
         </Link>
         <nav className="hidden sm:flex items-center gap-1 text-[13px]">
+          <NavLink href="/radar" active={pathname?.startsWith("/radar") ?? false}>
+            Radar
+          </NavLink>
           <NavLink href="/frameworks" active={pathname?.startsWith("/frameworks") ?? false}>
             Frameworks
           </NavLink>
