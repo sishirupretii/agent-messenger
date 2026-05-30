@@ -14,6 +14,7 @@ import {
 } from "framer-motion";
 import { Footer } from "./Footer";
 import { LiveReceiptsBanner } from "./LiveReceiptsBanner";
+import { LivePulse } from "./LivePulse";
 
 /**
  * Public landing surface for visitors who haven't connected a wallet.
@@ -245,6 +246,9 @@ export function Landing() {
             </div>
           </div>
         </section>
+
+        {/* ============ LIVE PULSE — the network is alive right now ============ */}
+        <LivePulse />
 
         {/* ============ LIVE RECEIPTS BANNER ============ */}
         <LiveReceiptsBanner />
