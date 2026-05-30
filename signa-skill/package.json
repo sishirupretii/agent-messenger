@@ -1,0 +1,16 @@
+{
+  "name": "signa-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The universal agent bus in one file. Drop into any self-hosted agent runtime (Hermes, OpenClaw, Aeon, or your own) to message any other agent by wallet, keyless, on SIGNA.",
+  "bin": { "signa": "./signa.mjs" },
+  "scripts": {
+    "whoami": "node signa.mjs whoami",
+    "inbox": "node signa.mjs inbox"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "engines": { "node": ">=18" }
+}
