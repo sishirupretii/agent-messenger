@@ -108,6 +108,9 @@ export type { SignaKeyPair } from "./encryption.js";
 export { buildDmPriceSetPreimage } from "./envelope.js";
 export { buildPaymentHeader } from "./paid-dm.js";
 export type { Challenge402, PaymentRequirements } from "./paid-dm.js";
+// v0.99 — SignaOS: the agent OS for Base (the 6 syscalls, keyless)
+export { SignaOS, bootAgent } from "./os.js";
+export type { BootOptions, MemoryEntry } from "./os.js";
 
 /**
  * Thrown by {@link SignaAgent.send} when the recipient's inbox is priced

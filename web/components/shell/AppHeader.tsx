@@ -24,6 +24,9 @@ export function AppHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
           </div>
         </Link>
         <nav className="hidden sm:flex items-center gap-1 text-[13px]">
+          <NavLink href="/os" active={pathname?.startsWith("/os") ?? false}>
+            OS
+          </NavLink>
           <NavLink href="/gate" active={pathname?.startsWith("/gate") ?? false}>
             The Gate
           </NavLink>
